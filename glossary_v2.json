@@ -1,0 +1,10 @@
+{
+ "note": "Глоссарий тайтла. Заполняется конвейером (glossary_extract -> judge -> arbiter).",
+ "pronoun_rules": {},
+ "counts": {},
+ "conflicts": [],
+ "ru_collisions": [],
+ "rejected": [],
+ "malformed": [],
+ "glossary": []
+}
