@@ -16,6 +16,7 @@ import sys
 import re
 from collections import Counter, defaultdict
 
+from lang import LANG
 from common import save_json
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -45,6 +46,9 @@ STOP_WORDS = {
 }
 
 def extract_terms_comprehensive(text):
+    if LANG.code != "zh":
+        # Для остальных языков кандидатов даёт профиль языка (lang.py).
+        return list(LANG.iter_candidates(text))
     all_terms = []
     p1 = re.compile(r'[\u4e00-\u9fa5]{2,8}(?:者|蟲|虫|獸|兽|怪|龍|龙|體|体|族|腦|脑|鳥|鸟|代|球|形|質|质|岩|器|脈|脉|門|门|核|靈|灵|島|岛|蛇|魚|鱼)')
     all_terms.extend(p1.findall(text))

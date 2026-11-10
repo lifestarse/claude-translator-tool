@@ -27,6 +27,7 @@ import re
 import shutil
 import sys
 
+from lang import LANG
 from common import (
     ROOT,
     chapter_path,
@@ -49,7 +50,7 @@ STYLE_REF = "glossary_style_reference.md"
 QUOTES_PER_TERM = 3
 QUOTE_PAD = 26          # characters of context on each side
 
-SENT_SPLIT_RE = re.compile(r"(?<=[。！？])")
+SENT_SPLIT_RE = LANG.sentence_split_re()
 
 
 def disputes():
@@ -143,7 +144,7 @@ def build(conflicts, collisions, glossary):
 
     if collisions:
         lines += [
-            "## Коллизии — разные китайские термины под одним русским именем",
+            "## Коллизии — разные термины оригинала под одним русским именем",
             "",
             "По каждой: одно это существо под двумя названиями (`shared`) или",
             "два разных (`rename`)? Ответ ищи в цитатах.",

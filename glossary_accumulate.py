@@ -23,6 +23,7 @@ import os
 import re
 import sys
 
+from lang import LANG
 from common import (
     CHAPTERS_DIR,
     ROOT,
@@ -51,8 +52,7 @@ MAX_SPREAD = 0.03
 # capitalised (Хранитель, Слизь, Фиолетовая клетка). Writing it lowercase is
 # the agent judging it a common noun, so take it at its word.
 MIN_LEN = 2
-CJK_RE = re.compile(r"[㐀-䶿一-鿿]")
-PAIR_RE = re.compile(r"([㐀-䶿一-鿿]{2,8})\s*=\s*([^,;\n]+)")
+PAIR_RE = re.compile(r"(" + LANG.term_pattern(2, 8) + r")\s*=\s*([^,;\n]+)")
 
 
 CHAPTER_RE = re.compile(r"^\s*(\d{3,4})\s")
@@ -177,8 +177,8 @@ def main():
             conflicts.append({"cn": cn, "canon": ru,
                               "variants": [v for _i, v in variants],
                               "первым назвал": "гл.%04d" % named_in})
-        if CJK_RE.search(ru):
-            rejected.append({"cn": cn, "ru": ru, "reason": "в русском варианте остались иероглифы"})
+        if LANG.has_source_script(ru):
+            rejected.append({"cn": cn, "ru": ru, "reason": "русский вариант не переведён (остался язык оригинала)"})
             continue
         if not ru[:1].isupper():
             rejected.append({

@@ -14,6 +14,7 @@ import argparse
 import os
 import shutil
 
+from lang import LANG
 from common import (
     CHAPTERS_DIR,
     MAX_CHAR_RATIO,
@@ -103,8 +104,8 @@ def main():
     if passed:
         ratios = sorted(s["char_ratio"] for _, s, _ in passed)
         mid = ratios[len(ratios) // 2]
-        print("Медианный коэф. объёма:   %.2fx (норма %.1f-%.1f для CN->RU)"
-              % (mid, MIN_CHAR_RATIO, MAX_CHAR_RATIO))
+        print("Медианный коэф. объёма:   %.2fx (норма %.1f-%.1f, оригинал: %s)"
+              % (mid, MIN_CHAR_RATIO, MAX_CHAR_RATIO, LANG.name))
 
     if failed:
         print("")

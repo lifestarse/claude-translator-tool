@@ -9,7 +9,7 @@
 сломается соответствие абзацев 1:1, на котором держится вся приёмка.
 Разрыв признаётся только при согласии обеих сторон:
 
-  * китайский абзац кончается не знаком конца фразы, а следующий не открывает
+  * абзац оригинала кончается не знаком конца фразы, а следующий не открывает
     реплику;
   * русский абзац кончается не знаком конца фразы, а следующий начинается со
     строчной буквы.
@@ -31,6 +31,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from lang import LANG  # noqa: E402
 from common import (  # noqa: E402
     RU_DIR,
     chapter_path,
@@ -44,10 +45,13 @@ from common import (  # noqa: E402
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# Конец фразы в оригинале: точка, восклицание, вопрос, многоточие, закрывающие
-# кавычки и скобки, тильда и тире (обрыв реплики — авторский приём).
-CN_END = set("。！？!?…」』”’）)】～~—.：:；;")
-CN_OPEN = set("「『“‘（(【")
+# Конец фразы и открытие реплики в оригинале зависят от языка (lang.py).
+# None — в письменности нет надёжного знака конца фразы (тайский): тогда
+# решает только русская сторона.
+CN_END = set(LANG.end) if LANG.end is not None else None
+CN_OPEN = set(LANG.open)
+# Чем склеивать половины в оригинале: в письменностях без пробелов — ничем.
+SRC_JOIN = "" if LANG.code in ("zh", "ja", "th") else " "
 RU_END = set(".!?…»”\")]:;—–-")
 LOWER_START_RE = re.compile(r"^[«\"„“(]?[a-zа-яё]")
 # Служебные маркеры [N] — глава ещё не финализирована, трогать её рано.
@@ -57,7 +61,7 @@ MARKER_RE = re.compile(r"^\s*\[\d+\]\s")
 def _is_break(cn_a, cn_b, ru_a, ru_b):
     if not (cn_a and cn_b and ru_a and ru_b):
         return False
-    if cn_a[-1] in CN_END or cn_b[0] in CN_OPEN:
+    if CN_END is not None and (cn_a[-1] in CN_END or cn_b[0] in CN_OPEN):
         return False
     if ru_a[-1] in RU_END:
         return False
@@ -95,7 +99,7 @@ def fix_chapter(idx, apply=False):
     if not breaks:
         return 0, ""
 
-    new_source = "\n\n".join(_merge(cn_paras, breaks, "")) + "\n"
+    new_source = "\n\n".join(_merge(cn_paras, breaks, SRC_JOIN)) + "\n"
     new_ru = "\n\n".join(_merge(ru_paras, breaks, " ")) + "\n"
     was_ok = not validate_translation(source, translated)
     problems = validate_translation(new_source, new_ru)

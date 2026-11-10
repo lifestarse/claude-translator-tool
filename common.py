@@ -7,6 +7,8 @@ import re
 import sys
 import tempfile
 
+from lang import LANG
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -25,7 +27,10 @@ PARA_MARKER_RE = re.compile(r"^\s*\[\d+\]\s")
 STRAY_TAG_RE = re.compile(
     r"</?(?:content|invoke|function_calls|parameter|antml|thinking)\b[^>]*>", re.I
 )
-CJK_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+# Знаки письменности оригинала (имя историческое: конвейер начинался с
+# китайского). Для латинских языков такого класса нет — там остатки считает
+# LANG.leftover() по непереведённым фразам; регэксп тогда не ловит ничего.
+CJK_RE = LANG.script_re or re.compile(r"(?!x)x")
 
 # "第11章+12章 共生", "第 3 章 航母", "第1234章" -> every 章 number in the title
 CHAPTER_NUM_RE = re.compile(r"第\s*(\d+)\s*章")
@@ -62,6 +67,8 @@ def parse_chapter_numbers(title):
     The site merges chapters ("第11章+12章 共生"), so one file can cover several.
     Returns [] for front/back matter ("完本感言", "序章").
     """
+    if LANG.code != "zh":
+        return LANG.chapter_numbers(title)
     nums = [int(n) for n in CHAPTER_NUM_RE.findall(title)]
     nums += [int(n) for n in BARE_NUM_RE.findall(title)]
     seen, out = set(), []
@@ -493,8 +500,9 @@ def relevant_terms(terms, source_text, limit=120):
 # 4.7x): a faithful CN->RU rendering of this text runs about 3.0-3.4x in
 # characters. The band below is deliberately wide because it is only a smoke
 # test; PARAGRAPH COUNT is the load-bearing check, being exact and unambiguous.
-MIN_CHAR_RATIO = 2.0
-MAX_CHAR_RATIO = 4.5
+# Норма зависит от языка оригинала (lang.py); 2.0-4.5 — китайская, замеренная.
+MIN_CHAR_RATIO = LANG.min_ratio
+MAX_CHAR_RATIO = LANG.max_ratio
 
 # Paragraph count must match EXACTLY. This is what actually caught the
 # fabrications: a retelling keeps 10-27% of the paragraphs, and no amount of
@@ -512,13 +520,13 @@ MAX_CHAR_RATIO = 4.5
 #
 # The slack was not free. Seven characters of a duplicated Chinese title passed
 # acceptance silently during the thinking-budget trial, purely because 7 < 8.
-MAX_CJK_CHARS = 2
+MAX_CJK_CHARS = LANG.max_leftover
 
 # Per-paragraph outlier bounds. Matching paragraph counts still permits a
 # paragraph rendered as "..." or one padded into an essay, so check alignment
 # too -- but only when the counts line up, otherwise indexes are meaningless.
-PARA_OUTLIER_LOW = 0.35
-PARA_OUTLIER_HIGH = 9.0
+PARA_OUTLIER_LOW = LANG.para_low      # 0.35 для китайского
+PARA_OUTLIER_HIGH = LANG.para_high    # 9.0 для китайского
 MAX_OUTLIERS = 2
 
 
@@ -562,9 +570,9 @@ def validate_translation(source, translated):
             % (len(stray), ", ".join(sorted(set(stray))[:3]))
         )
 
-    cjk = len(CJK_RE.findall(translated))
+    cjk = LANG.leftover(translated)
     if cjk > MAX_CJK_CHARS:
-        problems.append("непереведённых китайских иероглифов: %d" % cjk)
+        problems.append("непереведённых %s: %d" % (LANG.leftover_name, cjk))
 
     char_ratio = len(translated) / max(len(source), 1)
     if char_ratio < MIN_CHAR_RATIO:
@@ -597,7 +605,7 @@ def validate_translation(source, translated):
         # alone would hide it.
         outliers = []
         for i, (src, ru) in enumerate(zip(src_p, ru_p)):
-            if len(src) < 12:
+            if len(src) < LANG.short_para:
                 continue  # "?" -> "Что?" is a huge ratio and perfectly correct
             r = len(ru) / len(src)
             if r < PARA_OUTLIER_LOW or r > PARA_OUTLIER_HIGH:
@@ -647,5 +655,5 @@ def translation_stats(source, translated):
         "char_ratio": round(len(translated) / max(len(source), 1), 3),
         "src_paras": len(src_p),
         "ru_paras": len(ru_p),
-        "cjk_left": len(CJK_RE.findall(translated)),
+        "cjk_left": LANG.leftover(translated),
     }
