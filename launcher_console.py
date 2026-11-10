@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, load_json, save_json
 
 
@@ -342,6 +343,10 @@ def main():
             active["name"], settings["fixer_model"],
             "введён" if active["key_env"] in session_env else "не задан",
             "введён" if "RANOBELIB_TOKEN" in session_env else "не задан"))
+        prov = llm.provider()
+        blockers = llm.problems(prov)
+        print("Провайдер: %s%s  (сменить: python llm.py use ...)" % (
+            prov["name"], " — НЕ ГОТОВ: " + "; ".join(blockers) if blockers else ""))
         print("1. Выбрать модель переводчика")
         print("2. Выбрать модель инженера")
         print("3. Добавить модель")

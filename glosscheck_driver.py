@@ -9,18 +9,17 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, load_json
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 DIR = os.path.join(ROOT, "glosscheck")
-CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
 
 def log(slot, msg):
@@ -52,10 +51,8 @@ def main():
             continue
         try:
             subprocess.run(
-                [CLAUDE, "-p", "Файл задания: glosscheck/task_%03d.md" % tag,
-                 "--agent", "glossmapcheck", "--model", "opus",
-                 "--permission-mode", "bypassPermissions", "--output-format", "json"],
-                cwd=ROOT, capture_output=True, timeout=2700,
+                llm.agent_cmd("Файл задания: glosscheck/task_%03d.md" % tag, "glossmapcheck", "opus"),
+        env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=2700,
                 encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             log(args.slot, "пакет %03d: таймаут" % tag)

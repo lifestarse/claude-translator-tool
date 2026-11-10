@@ -11,14 +11,13 @@
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, accept_or_restore, load_json, snapshot_ru
 
-CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -45,10 +44,8 @@ def claim(idx):
 
 def run_agent(idx):
     proc = subprocess.run(
-        [CLAUDE, "-p", "Файл задания: fixes/fix_%04d.md" % idx,
-         "--agent", "termfix", "--model", "sonnet",
-         "--permission-mode", "bypassPermissions", "--output-format", "json"],
-        cwd=ROOT, capture_output=True, timeout=900,
+        llm.agent_cmd("Файл задания: fixes/fix_%04d.md" % idx, "termfix", "sonnet"),
+        env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=900,
         encoding="utf-8", errors="replace",
     )
     # Точный учёт: конверт вызова копится в jsonl, как autorun_usage

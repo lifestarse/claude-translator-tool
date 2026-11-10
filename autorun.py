@@ -43,6 +43,7 @@ import sys
 import time
 
 import finalize
+import llm
 from common import (
     RU_DIR,
     ROOT,
@@ -272,8 +273,10 @@ def error_text(stdout, fallback):
     return (fallback or "")[-300:]
 
 
-def internet_up(host=API_HOST, port=443, timeout=3):
+def internet_up(host=None, port=None, timeout=3):
     """Can we open a socket to the API at all."""
+    host = host or llm.api_host()
+    port = port or llm.api_port()
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -328,6 +331,10 @@ def classify(stdout, stderr, rc):
     data = envelope(stdout)
     if data is not None and rc == 0 and not data.get("is_error"):
         return "ok"
+    if data is not None and data.get("fatal"):
+        # Встроенный агент (llm_agent.py) сам знает, что повтор не поможет:
+        # неверный ключ или имя модели. Ждать сеть тут — ждать вечно.
+        return "fail"
 
     parts = [stderr or ""]
     if data is not None:
@@ -400,18 +407,16 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet"):
     hitting a limit at 3am costs the run nothing. Only genuine task failures are
     counted and given up on.
     """
-    cmd = [
-        CLAUDE, "-p", prompt,
-        "--agent", agent,
-        "--model", model,
-        "--permission-mode", "bypassPermissions",
-        "--output-format", "json",
-    ]
+    # Кто отвечает — подписка Claude или API-ключ другого провайдера —
+    # решает активный профиль llm.py; форма вывода у всех одна.
+    provider = llm.provider()
+    cmd = llm.agent_cmd(prompt, agent, model, provider)
+    env = llm.agent_env(provider)
     rate_waits, net_waits, hard_fails, timeouts = 0, 0, 0, 0
     while True:
         try:
             proc = subprocess.run(
-                cmd, cwd=ROOT, capture_output=True, timeout=timeout,
+                cmd, cwd=ROOT, env=env, capture_output=True, timeout=timeout,
                 encoding="utf-8", errors="replace",
             )
             out = (proc.stdout or "") + "\n" + (proc.stderr or "")
@@ -731,7 +736,10 @@ def main():
         log("Непереведённых глав не осталось.")
         return
 
-    CLAUDE = find_claude()
+    CLAUDE = find_claude() if llm.provider()["kind"] == "cli" else None
+    blockers = llm.problems()
+    if blockers:
+        raise SystemExit("Провайдер модели не готов:\n  " + "\n  ".join(blockers))
     state["started"] = dt.datetime.now().isoformat(timespec="seconds")
     save_state(state)
 

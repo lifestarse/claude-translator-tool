@@ -10,18 +10,17 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, load_json
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 DRIFT_DIR = os.path.join(ROOT, "drift")
-CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
 
 def log(slot, msg):
@@ -53,10 +52,8 @@ def main():
             continue
         try:
             proc = subprocess.run(
-                [CLAUDE, "-p", "Файл задания: drift/judge_%03d.md" % tag,
-                 "--agent", "glossjudge", "--model", "sonnet",
-                 "--permission-mode", "bypassPermissions", "--output-format", "json"],
-                cwd=ROOT, capture_output=True, timeout=1200,
+                llm.agent_cmd("Файл задания: drift/judge_%03d.md" % tag, "glossjudge", "sonnet"),
+        env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=1200,
                 encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             log(args.slot, "пакет %03d: таймаут" % tag)

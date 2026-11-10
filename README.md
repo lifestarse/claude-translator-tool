@@ -100,6 +100,45 @@ pl tr vi id th ar fa he hi uk`, неизвестный код — общий п�
 `scraper.py`, примеры калек в промпте proofreader. На другом языке они просто
 не срабатывают; свои спам-маркеры сайта добавляй в `SPAM_MARKERS/SPAM_SPANS`.
 
+## Провайдер модели: подписка или API-ключи
+
+По умолчанию агентов запускает `claude` CLI на подписке Claude. Переключение —
+одной командой, все флоты (`autorun.py`, `*_driver.py`) подхватывают его сами:
+
+```
+python llm.py list                              готовые профили
+python llm.py use anthropic                     API-ключ Anthropic вместо подписки
+python llm.py use openrouter --model ИМЯ        другой провайдер, одна модель на все роли
+python llm.py use openai --sonnet A --opus B    разные модели по ролям
+python llm.py key openrouter                    ввести ключ (скрыто, ляжет в .env)
+python llm.py test                              пробный вызов
+python llm.py use subscription                  назад на подписку
+```
+
+Готовые профили: `subscription`, `anthropic`, `deepseek`, `zai`, `moonshot`
+(через `claude` CLI — у этих провайдеров Anthropic-совместимый API) и
+`openai`, `gemini`, `openrouter`, `xai`, `groq`, `mistral`, `together`,
+`ollama` (OpenAI-совместимый API). Любой свой шлюз:
+`python llm.py use ИМЯ --base-url URL --key-env ПЕРЕМЕННАЯ --model МОДЕЛЬ`
+(добавь `--protocol anthropic`, если шлюз говорит на API Anthropic).
+
+Для OpenAI-совместимых провайдеров `claude` не нужен: агента ведёт
+встроенный цикл `llm_agent.py` — те же промпты `.claude/agents/*.md`, те же
+инструменты (Read, Write, Edit, Bash, Grep, Glob; файлы только внутри
+проекта), тот же формат отчёта. Скрипты просят роль (`opus`, `sonnet`,
+`haiku`), профиль отображает её на модель провайдера; имён чужих моделей в
+коде нет — их задаёшь ты.
+
+Ключи читаются из переменной окружения профиля или из `.env`; оба файла
+настроек (`.env`, `.llm.json`) в `.gitignore`. Особые параметры запроса
+(например, лимит вывода) — поле `extra_body` профиля в `.llm.json`.
+
+Чего ждать: приёмка глав от провайдера не зависит, так что слабая модель даст
+больше брака и повторов, а не испорченный корпус. Стоимость в журнале расходов
+считается, только если провайдер сам присылает её в ответе (OpenRouter);
+иначе там токены без долларов. `translate.py` (прямой перевод без агентов)
+по-прежнему работает только с API Anthropic.
+
 ## Чего в каркасе нет (собирается под тайтл)
 
 - Сборщики заданий для флотов `glossmap`, `glosscheck`, `termaudit`

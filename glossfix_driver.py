@@ -11,18 +11,17 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, accept_or_restore, load_json, snapshot_ru
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 GFX_DIR = os.path.join(ROOT, "gfx")
-CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
 
 def log(slot, msg):
@@ -44,10 +43,8 @@ def claim(tag):
 
 def run_agent(tag):
     proc = subprocess.run(
-        [CLAUDE, "-p", "Файл задания: gfx/batch_%03d.md" % tag,
-         "--agent", "glossfix", "--model", "sonnet",
-         "--permission-mode", "bypassPermissions", "--output-format", "json"],
-        cwd=ROOT, capture_output=True, timeout=3600,
+        llm.agent_cmd("Файл задания: gfx/batch_%03d.md" % tag, "glossfix", "sonnet"),
+        env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=3600,
         encoding="utf-8", errors="replace",
     )
     try:

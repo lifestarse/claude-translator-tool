@@ -11,18 +11,17 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import llm
 from common import ROOT, accept_or_restore, load_json, snapshot_ru
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 FIX_DIR = os.path.join(ROOT, "fixes")
-CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
 
 def log(slot, msg):
@@ -44,10 +43,8 @@ def claim(tag):
 
 def run_agent(tag):
     proc = subprocess.run(
-        [CLAUDE, "-p", "Файл задания: fixes/batch_%03d.md" % tag,
-         "--agent", "termfix-batch", "--model", "sonnet",
-         "--permission-mode", "bypassPermissions", "--output-format", "json"],
-        cwd=ROOT, capture_output=True, timeout=3600,
+        llm.agent_cmd("Файл задания: fixes/batch_%03d.md" % tag, "termfix-batch", "sonnet"),
+        env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=3600,
         encoding="utf-8", errors="replace",
     )
     try:
