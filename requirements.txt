@@ -1,0 +1,21 @@
+# Ядро конвейера (приёмка, сборка заданий, драйверы, llm.py) работает на
+# стандартной библиотеке. Ниже — необязательное, ставь то, чем пользуешься.
+
+# scraper.py (сайт czbooks)
+primp
+beautifulsoup4
+
+# config_ui.py — пульт
+streamlit
+
+# translate.py — прямой перевод через API Anthropic, без агентов
+anthropic
+
+# morph_rename.py — переименование в готовом переводе морфологией
+pymorphy3
+natasha
+
+# Морфология языка оригинала (lang.py): поставь строку своего языка
+simplemma       # en es fr de pt it nl pl tr id uk fa hi
+kiwipiepy       # ko
+janome          # ja

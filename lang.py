@@ -113,6 +113,94 @@ KO_PARTICLES = sorted((
 ), key=len, reverse=True)
 
 
+# Языки, для которых есть словарная лемматизация simplemma (pip install simplemma).
+SIMPLEMMA = {"en", "es", "fr", "de", "pt", "it", "nl", "pl", "tr", "id", "uk", "fa", "hi"}
+JA_SKIP = ("数", "非自立", "代名詞", "接尾", "副詞可能")
+
+
+class Morph(object):
+    """Морфология языка оригинала — необязательные библиотеки.
+
+    Зачем она нужна. Термин в глоссарии записан в словарной форме, а в тексте
+    стоит в косвенной: немецкое Wächters, польское Wiedźmina, корейское 린은.
+    Без морфологии такие вхождения считаются разными кандидатами, а термин
+    глоссария не находится в главе и не попадает в задание переводчику.
+
+        ko               kiwipiepy   — разбор на морфемы, имена без частиц
+        ja               janome      — слова вместо n-грамм знаков
+        en es fr de pt   simplemma   — словарная форма слова
+        it nl pl tr id
+        uk fa hi
+
+    Китайскому, вьетнамскому и тайскому морфология не нужна (слова не
+    изменяются); для арабского и иврита подходящей лёгкой библиотеки нет.
+    Библиотека не установлена — конвейер работает как раньше, грубее.
+    """
+
+    def __init__(self, code):
+        self.code = code
+        self.backend = None
+        self._kiwi = self._janome = self._simplemma = None
+        try:
+            if code == "ko":
+                from kiwipiepy import Kiwi
+                self._kiwi, self.backend = Kiwi(), "kiwipiepy"
+            elif code == "ja":
+                from janome.tokenizer import Tokenizer
+                self._janome, self.backend = Tokenizer(), "janome"
+            elif code in SIMPLEMMA:
+                import simplemma
+                simplemma.lemmatize("test", lang=code)
+                self._simplemma, self.backend = simplemma, "simplemma"
+        except Exception:   # noqa: BLE001 — нет библиотеки или её данных
+            self.backend = None
+
+    @property
+    def wanted(self):
+        """Какую библиотеку стоит поставить для этого языка (или None)."""
+        return {"ko": "kiwipiepy", "ja": "janome"}.get(
+            self.code, "simplemma" if self.code in SIMPLEMMA else None)
+
+    def lemma(self, word):
+        """Словарная форма слова; без библиотеки — само слово."""
+        if self._simplemma is None:
+            return word
+        out = self._simplemma.lemmatize(word, lang=self.code)
+        return out[:1].upper() + out[1:] if word[:1].isupper() else out
+
+    def nouns(self, text):
+        """Существительные и их цепочки (ko, ja) — кандидаты в термины."""
+        run = []
+        if self._kiwi is not None:
+            for t in self._kiwi.tokenize(text):
+                if t.tag in ("NNP", "NNG") and (not run or run[-1][1] == t.start):
+                    run.append((t.form, t.start + t.len))
+                    continue
+                if run:
+                    yield "".join(f for f, _ in run)
+                run = [(t.form, t.start + t.len)] if t.tag in ("NNP", "NNG") else []
+            if run:
+                yield "".join(f for f, _ in run)
+        elif self._janome is not None:
+            for t in self._janome.tokenize(text):
+                pos = t.part_of_speech.split(",")
+                if pos[0] == "名詞" and pos[1] not in JA_SKIP:
+                    run.append(t.surface)
+                    continue
+                if run:
+                    yield "".join(run)
+                run = []
+            if run:
+                yield "".join(run)
+
+    def forms(self, text):
+        """Множество словарных форм слов текста, в нижнем регистре."""
+        if self._simplemma is None:
+            return frozenset()
+        return frozenset(self._simplemma.lemmatize(w, lang=self.code).lower()
+                         for w in set(re.findall(r"[^\W\d_]+", text)))
+
+
 class Profile(object):
     """Свойства языка оригинала. Поля — данные, методы — то, что код конвейера
     раньше делал китайскими регэкспами напрямую."""
@@ -145,6 +233,28 @@ class Profile(object):
         self.end = end
         self.open = open_
         self.transcription = transcription
+        self._morph = None
+
+    @property
+    def morph(self):
+        """Морфология оригинала; библиотеки грузятся при первом обращении."""
+        if self._morph is None:
+            self._morph = Morph(self.code)
+        return self._morph
+
+    def term_in(self, term, text, forms=None):
+        """Встречается ли термин глоссария в тексте оригинала.
+
+        Сначала дословно. Если не нашёлся, а язык склоняется и библиотека
+        стоит, — по словарным формам: «Wächter» найдётся в «des Wächters».
+        """
+        if term in text:
+            return True
+        if self.morph.backend != "simplemma":
+            return False
+        forms = forms if forms is not None else self.morph.forms(text)
+        words = re.findall(r"[^\W\d_]+", term)
+        return bool(words) and all(self.morph.lemma(w).lower() in forms for w in words)
 
     # --- приёмка ----------------------------------------------------------
 
@@ -220,7 +330,12 @@ class Profile(object):
 
     def iter_candidates(self, text):
         """Кандидаты в термины из сырого текста — на вход частотному отбору."""
-        if self.extract == "ngram":
+        if self.code in ("ko", "ja") and self.morph.backend:
+            # Морфоразбор точнее и n-грамм, и снятия частиц по списку.
+            for term in self.morph.nouns(text):
+                if len(term) >= 2:
+                    yield term
+        elif self.extract == "ngram":
             if self.code == "ja":
                 for run in re.findall("[゠-ヺー]{3,}", text):
                     yield run
@@ -241,7 +356,8 @@ class Profile(object):
                 yield word
         else:
             for term in self._capitalized(text):
-                yield term
+                # Одно слово — в словарную форму: Wächters и Wächter одно и то же.
+                yield self.morph.lemma(term) if " " not in term else term
 
     _TOKEN = re.compile(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*")
 
@@ -449,6 +565,13 @@ def main():
     print("Кандидаты      : %s" % {"ngram": "n-граммы знаков", "words": "слова",
                                    "capitalized": "слова с заглавной"}[p.extract])
     print("Транскрипция   : %s" % p.transcription)
+    if p.morph.backend:
+        print("Морфология     : %s" % p.morph.backend)
+    elif p.morph.wanted:
+        print("Морфология     : нет — поставь: pip install %s (термины в косвенных "
+              "формах будут находиться точнее)" % p.morph.wanted)
+    else:
+        print("Морфология     : этому языку не нужна или лёгкой библиотеки нет")
     print("Доступные коды : %s" % " ".join(sorted(PROFILES)))
 
 

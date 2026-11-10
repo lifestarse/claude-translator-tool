@@ -481,7 +481,11 @@ def relevant_terms(terms, source_text, limit=120):
 
     Longest-first so 蘇蘇米 wins over 蘇; most-mentioned first on ties.
     """
-    hits = [t for t in terms if t["cn"] in source_text]
+    # Для склоняемых языков оригинала термин ищется ещё и по словарным формам
+    # (lang.py, Morph): иначе «Wächter» из глоссария не найдётся в «des Wächters»
+    # и не попадёт в задание переводчику.
+    forms = LANG.morph.forms(source_text) if LANG.morph.backend == "simplemma" else None
+    hits = [t for t in terms if LANG.term_in(t["cn"], source_text, forms)]
     hits.sort(key=lambda t: (-len(t["cn"]), -(t.get("total_mentions") or 0)))
     return hits[:limit]
 
