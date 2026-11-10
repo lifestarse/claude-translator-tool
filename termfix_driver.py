@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Драйвер флота termfix: гонит агентов по заданиям fixes/fix_*.md.
 
-Каждая правка проверяется приёмкой; испорченная глава откатывается из git
+Каждая правка проверяется приёмкой; испорченная глава откатывается к снимку,
+снятому перед агентом,
 и задание помечается упавшим. Несколько экземпляров делят работу через
 атомарный захват .claim-файлов — запускать можно любым числом копий:
 
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import time
 
-from common import ROOT, chapter_path, load_json, read_text, ru_path, validate_translation
+from common import ROOT, accept_or_restore, load_json, snapshot_ru
 
 CLAUDE = shutil.which("claude") or shutil.which("claude.cmd")
 
@@ -82,20 +83,19 @@ def main():
         if not claim(idx):
             continue
         ok = False
+        snapshot = snapshot_ru([idx])
         for attempt in (1, 2):
             try:
                 run_agent(idx)
             except subprocess.TimeoutExpired:
                 log(args.slot, "гл.%04d: таймаут агента (попытка %d)" % (idx, attempt))
+                accept_or_restore(idx, snapshot)   # полуправку — откатить
                 continue
-            problems = validate_translation(read_text(chapter_path(idx)),
-                                            read_text(ru_path(idx)))
+            problems = accept_or_restore(idx, snapshot)
             if not problems:
                 ok = True
                 break
             log(args.slot, "гл.%04d: приёмка сломана (%s) — откат" % (idx, problems[:1]))
-            subprocess.run(["git", "checkout", "--", "ru/chapter_%04d.txt" % idx],
-                           cwd=ROOT, capture_output=True)
         marker = "done" if ok else "fail"
         with open(os.path.join(FIX_DIR, "fix_%04d.%s" % (idx, marker)), "w") as fh:
             fh.write("")

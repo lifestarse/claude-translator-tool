@@ -26,7 +26,6 @@ Verdicts go to glossary_judged/, where glossary_merge.py already looks.
 
 import argparse
 import collections
-import json
 import os
 import re
 import sys

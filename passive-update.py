@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finalize                                     # noqa: E402
 import publish_ranobelib as pub                     # noqa: E402
-from common import load_json, read_text, ru_path, save_json, write_text  # noqa: E402
+from common import load_json, ru_path, save_json, write_text  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
 import importlib.util  # noqa: E402
@@ -72,24 +72,31 @@ def wait_for_lock(timeout=1800):
     return True
 
 
-def prepare(idx):
-    """Довести главу до отправляемого вида. True, если готова."""
+def prepare(idx, dry=False):
+    """Довести главу до отправляемого вида. True, если готова.
+
+    В пробном прогоне на диск ничего не пишется: финализация и склейка только
+    проверяются."""
     status, detail, text = finalize.finalize_one(idx)
     if status == "fail":
         log("    гл.%04d: финализация не далась — %s" % (idx, detail))
         return False
-    if status == "ok":
+    if status == "ok" and not dry:
         write_text(ru_path(idx), text + "\n")
-    merges, _ = merger.fix_chapter(idx, apply=True)
+    merges, _ = merger.fix_chapter(idx, apply=not dry)
     if merges:
         log("    гл.%04d: склеено разорванных абзацев: %d" % (idx, merges))
     return True
 
 
-def next_chapter(mapping, covered, ledger):
-    """Первая по порядку чтения глава, которой ещё нет на сайте."""
+def next_chapter(mapping, covered, ledger, blocked=()):
+    """Первая по порядку чтения глава, которой ещё нет на сайте.
+
+    `blocked` — главы, которые в этом запуске уже не прошли подготовку или
+    отправку. Без пропуска такая глава вставала бы первой на каждом круге и
+    навсегда запирала очередь за собой."""
     for idx in sorted(mapping):
-        if idx in covered or str(idx) in ledger["published"]:
+        if idx in blocked or idx in covered or str(idx) in ledger["published"]:
             continue
         if os.path.exists(ru_path(idx)):
             return idx
@@ -141,6 +148,7 @@ def main():
     if exp:
         log("токен годен ещё %.1f сут" % ((exp - time.time()) / 86400))
 
+    blocked = set()
     try:
         while True:
             if wait_for_lock():
@@ -155,11 +163,14 @@ def main():
                     try:
                         mapping, _coll, covered = pub.load_volume_map()
                         ledger = load_json(pub.LEDGER, {"published": {}}) or {"published": {}}
-                        idx = next_chapter(mapping, covered, ledger)
+                        idx = next_chapter(mapping, covered, ledger, blocked)
                         if idx is None:
                             log("готовых глав нет — жду перевода")
-                        elif prepare(idx):
-                            publish_one(idx, mapping, ledger, token, args.dry)
+                        elif not (prepare(idx, args.dry)
+                                  and publish_one(idx, mapping, ledger, token, args.dry)):
+                            blocked.add(idx)
+                            log("    гл.%04d отложена до перезапуска; пропущены: %s"
+                                % (idx, ", ".join(str(i) for i in sorted(blocked))))
                     finally:
                         release()
 

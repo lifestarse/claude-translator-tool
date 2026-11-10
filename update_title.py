@@ -22,6 +22,7 @@
 """
 
 import argparse
+import os
 import json
 import sys
 import urllib.error
@@ -34,7 +35,7 @@ from publish_ranobelib import API, SITE_ID, SLUG, MANGA_ID, token_or_die
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-SUMMARY_FILE = "title_summary.md"
+SUMMARY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "title_summary.md")
 # Возрастное ограничение сайт требует при каждой правке: без него валидатор
 # отвечает «обязательно для заполнения, когда "Модерация" не указано».
 CAUTION = 4  # 18+, как стоит в карточке
@@ -98,6 +99,9 @@ def main():
     ap.add_argument("--file", default=SUMMARY_FILE)
     args = ap.parse_args()
 
+    if not os.path.exists(args.file):
+        raise SystemExit("Нет файла описания %s — напиши описание тайтла "
+                         "(абзацы через пустую строку) и запусти снова." % args.file)
     paras = split_paragraphs(read_text(args.file))
     print("Абзацев: %d, символов: %d" % (len(paras), sum(len(p) for p in paras)))
     print("")

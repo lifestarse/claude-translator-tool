@@ -9,10 +9,11 @@
 
 1. Заполни `BOOK.md` (название, BRIEF, источник, реквизиты RanobeLIB).
 2. `python setup_book.py --apply` — проштамповать тайтл в промпты.
-3. Константы: `scraper.py` → CATALOG_URL (скрейпер писан под czbooks.net —
+3. Обложка EPUB — `cover.jpg` в корне (необязательно).
+4. Константы: `scraper.py` → CATALOG_URL (скрейпер писан под czbooks.net —
    для другого сайта переписать парсинг страницы), `publish_ranobelib.py` →
    SLUG и TEAM_ID, токен в `.ranobelib_token`.
-4. Дальше — стадии по порядку.
+5. Дальше — стадии по порядку.
 
 ## Стадии конвейера
 
@@ -65,8 +66,29 @@
   qcfix, fixer, termfix, termfix-batch, glossfix, glossjudge, glossmap,
   glossmapcheck, termaudit. Книго-контекст штампуется из BOOK.md.
 - Драйверы флотов (`*_driver.py`) — атомарные claim-файлы, поглавная
-  приёмка, `git checkout` битого, журнал расходов `termfix_usage.jsonl`.
+  приёмка, `откат битого к снимку, журнал расходов `termfix_usage.jsonl`.
 - `config_ui.py` — пульт (streamlit), `launcher_console.py` — диспетчер задач.
+
+## Чего в каркасе нет (собирается под тайтл)
+
+- Сборщики заданий для флотов `glossmap`, `glosscheck`, `termaudit`
+  (`<папка>/task_index.json` + `task_NNN.md`) и скелет карты мира
+  `glossmap/skeleton.json` / сведённый `glossmap/merged.json` — драйверы и
+  `build_reader_map.py` их только читают.
+- `replacement_detail.json` (гистограмма замен для `repair_vandal.py`) строится
+  пословным диффом по git; движку отката нужен `ru/` под git — в этом
+  каркасе `ru/*` в `.gitignore`, для vandal-аудита сними исключение.
+- Книго-специфичные правила `repair_vandal.py` (`classify`, `CONTEXT_REPAIRS`,
+  `ERSH_*`) и `TARGET_CN` в `build_glossfix.py` — примеры прошлого тайтла,
+  заменить своими.
+
+## Запуск задач на Linux
+
+`python main.py` (диспетчер) на Windows открывает задачу в окне PowerShell
+(`launcher_worker.ps1`), на Linux/macOS — запускает в фоне своей сессией с
+журналом `logs/<задача>.log`; остановка — пунктом меню. Участки параллельных
+слотов `autorun.py --range LO HI --slot NN` пишет сам в
+`parallel_range_NN.json`, их читает `parallel_status.py`.
 
 ## Секреты
 

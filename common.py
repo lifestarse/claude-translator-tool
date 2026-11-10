@@ -611,6 +611,34 @@ def validate_translation(source, translated):
     return problems
 
 
+def snapshot_ru(indices):
+    """{idx: текст перевода или None} — точка отката перед правкой агентом.
+
+    Откат через `git checkout` не годится: ru/ в .gitignore, а даже будь он в
+    git, checkout вернул бы версию индекса и стёр бы прежние незакоммиченные
+    хорошие правки. Снимок в памяти возвращает ровно то, что было до агента.
+    """
+    out = {}
+    for idx in indices:
+        path = ru_path(idx)
+        out[idx] = read_text(path) if os.path.exists(path) else None
+    return out
+
+
+def accept_or_restore(idx, snapshot):
+    """Приёмка главы после правки; при провале — откат к снимку.
+
+    Возвращает список проблем (пустой — глава принята)."""
+    path = ru_path(idx)
+    if not os.path.exists(path) or not os.path.exists(chapter_path(idx)):
+        problems = ["нет файла главы"]
+    else:
+        problems = validate_translation(read_text(chapter_path(idx)), read_text(path))
+    if problems and snapshot.get(idx) is not None:
+        write_text(path, snapshot[idx])
+    return problems
+
+
 def translation_stats(source, translated):
     src_p, ru_p = split_paragraphs(source), split_paragraphs(translated)
     return {

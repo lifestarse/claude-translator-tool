@@ -24,7 +24,6 @@ Measured on 3411 chapters: 44468 raw candidates -> 32807 after fragment removal
 
 import argparse
 import collections
-import json
 import os
 import re
 import sys
@@ -283,7 +282,10 @@ def main():
     if args.batch_size > 0:
         os.makedirs(BATCH_DIR, exist_ok=True)
         for old in os.listdir(BATCH_DIR):
-            os.remove(os.path.join(BATCH_DIR, old))
+            # Только свои пакеты: в той же папке лежат волны prewave_terms
+            # (wave_*.json, judge_wave_*.md) и задания арбитража.
+            if old.startswith("batch_"):
+                os.remove(os.path.join(BATCH_DIR, old))
         batches = [
             candidates[i : i + args.batch_size]
             for i in range(0, len(candidates), args.batch_size)

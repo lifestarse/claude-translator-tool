@@ -61,7 +61,12 @@ if hasattr(sys.stdout, "reconfigure"):
 
 API = "https://api.cdnlibs.org/api"
 SLUG = "SET-ME--slug-тайтла-на-ranobelib"  # из URL страницы тайтла
-MANGA_ID = int(SLUG.split("--")[0])
+# Числовой id тайтла — префикс SLUG до «--». Пока SLUG не заполнен, модуль
+# обязан импортироваться (его тянут main.py, passive-update.py, update_title.py
+# ради --help и --status), поэтому ошибка поднимается только при обращении к
+# сайту — в token_or_die.
+_SLUG_ID = SLUG.split("--")[0]
+MANGA_ID = int(_SLUG_ID) if _SLUG_ID.isdigit() else None
 SITE_ID = "3"
 # Команда перевода: id из URL страницы команды на сайте.
 TEAM_ID = 0  # id команды переводчиков на сайте
@@ -241,6 +246,10 @@ def token_or_die(path=None):
     истории PowerShell, а файл можно удалить одной командой. Ни то, ни другое
     никуда не выводится — при ошибках печатается только длина.
     """
+    if MANGA_ID is None or not TEAM_ID:
+        raise SystemExit(
+            "Не настроен тайтл: впиши SLUG (вида 12345--name) и TEAM_ID "
+            "в начале publish_ranobelib.py.")
     for candidate in ([path] if path else []) + [TOKEN_FILE]:
         if candidate and os.path.exists(candidate):
             tok = extract_token(read_text(candidate))
@@ -618,6 +627,7 @@ def run(args):
         if args.publish and (str(vol), str(num)) in already:
             print("[=] %s: уже на сайте" % tag)
             ledger["published"][str(idx)] = {"volume": vol, "number": num, "note": "было до скрипта"}
+            save_json(LEDGER, ledger)
             skipped += 1
             continue
 

@@ -35,6 +35,7 @@ from common import (
     validate_translation,
 )
 from termfix import load_fixes, scan
+import author_numbers  # noqa: E402
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -113,10 +114,12 @@ def main():
     src_idx = indexes_in(CHAPTERS_DIR)
     ru_idx = indexes_in(RU_DIR)
     n_max = max(src_idx | ru_idx)
-    volume_map = load_json(os.path.join(ROOT, "volume_map.json"), {})
-    vmap = volume_map.get("map", {})
-    dup_claimed = {d["index"]: str(d["claimed"])
-                   for d in volume_map.get("duplicates", [])}
+    # Разметку считаем сами, а не читаем снимок volume_map.json: его пишет
+    # только publish_ranobelib, и до первой выкладки его попросту нет.
+    numbering = author_numbers.build()
+    vmap = {str(k): [v[0], v[1]] for k, v in numbering["map"].items()}
+    covered = {str(k) for k in numbering.get("covered", {})}
+    dup_claimed = {i: str(b) for i, b, _l, _o in numbering.get("duplicates", [])}
     fixes = None if args.skip_terms else load_fixes()
     glossary = [] if args.skip_glossary else glossary_probes()
 
@@ -173,8 +176,10 @@ def main():
         m = TITLE_RE.match(head)
         if m:
             label = (vmap.get(str(idx)) or [None, None])[1]
-            if label is None:
-                fail("нумерация", "гл.%04d: нет записи в volume_map.json" % idx)
+            if label is None and str(idx) in covered:
+                pass    # вторая половина склейки: номер несёт глава-владелец
+            elif label is None:
+                fail("нумерация", "гл.%04d: нет авторского номера (author_numbers)" % idx)
             elif not numbers_equal(m.group(1), label):
                 # Авторские повторы нумерации: в карте дробный номер (216.1),
                 # в заголовке — авторский целый. Решение пользователя

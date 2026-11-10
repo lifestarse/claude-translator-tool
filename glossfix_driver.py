@@ -2,7 +2,8 @@
 """Драйвер выровненной правки имён: агент glossfix на пакет глав.
 
 Копия termfix_batch_driver с другим каталогом и агентом: приёмка поглавная,
-испорченная глава откатывается из git, претензии через атомарный .claim.
+испорченная глава откатывается к снимку,
+снятому перед агентом,, претензии через атомарный .claim.
 
     python glossfix_driver.py --slot 1
 """
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import time
 
-from common import ROOT, chapter_path, load_json, read_text, ru_path, validate_translation
+from common import ROOT, accept_or_restore, load_json, snapshot_ru
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -75,22 +76,18 @@ def main():
             continue
         if not claim(tag):
             continue
+        snapshot = snapshot_ru(b["chapters"])
+        timed_out = False
         try:
             report = run_agent(tag)
         except subprocess.TimeoutExpired:
-            log(args.slot, "пакет %03d: таймаут" % tag)
-            open(os.path.join(GFX_DIR, "batch_%03d.fail" % tag), "w").close()
-            continue
+            # Агент мог успеть наполовину поправить главы — приёмка и откат
+            # обязательны и здесь, а не только на штатном выходе.
+            timed_out = True
+            report = "таймаут"
 
-        broken = []
-        for idx in b["chapters"]:
-            problems = validate_translation(read_text(chapter_path(idx)),
-                                            read_text(ru_path(idx)))
-            if problems:
-                subprocess.run(["git", "checkout", "--", "ru/chapter_%04d.txt" % idx],
-                               cwd=ROOT, capture_output=True)
-                broken.append(idx)
-        marker = "done" if not broken else "part"
+        broken = [idx for idx in b["chapters"] if accept_or_restore(idx, snapshot)]
+        marker = "fail" if timed_out else ("done" if not broken else "part")
         open(os.path.join(GFX_DIR, "batch_%03d.%s" % (tag, marker)), "w").close()
         log(args.slot, "пакет %03d: %s%s" % (
             tag, report or "агент молчит",

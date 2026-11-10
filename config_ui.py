@@ -10,7 +10,6 @@
 """
 
 import io
-import json
 import os
 import subprocess
 import sys
@@ -53,7 +52,7 @@ RU_DIR = os.path.join(ROOT, "ru")
 GATEWAY_BAK = lc.SETTINGS_FILE + ".gateway.bak"
 CONSOLE_KEYS = ("models", "active_model", "fixer_model", "defaults")
 
-st.set_page_config(page_title="Пульт конвейера — Симфония", page_icon="📖", layout="wide")
+st.set_page_config(page_title="Пульт конвейера перевода", page_icon="📖", layout="wide")
 
 
 def manager_call(fn, *args):
@@ -73,9 +72,12 @@ def save_settings(settings):
     """
     raw = load_json(lc.SETTINGS_FILE, {}) or {}
     foreign = {k: v for k, v in raw.items() if k not in CONSOLE_KEYS}
-    if foreign and not os.path.exists(GATEWAY_BAK):
-        with open(GATEWAY_BAK, "w", encoding="utf-8") as f:
-            json.dump(raw, f, indent=2, ensure_ascii=False)
+    if foreign:
+        # Копия дополняется, а не пишется один раз: иначе ключи, появившиеся
+        # после первого выноса, молча терялись бы при следующем сохранении.
+        bak = load_json(GATEWAY_BAK, {}) or {}
+        bak.update(foreign)
+        save_json(GATEWAY_BAK, bak)
     save_json(lc.SETTINGS_FILE, {k: settings[k] for k in CONSOLE_KEYS})
 
 

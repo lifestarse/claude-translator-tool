@@ -178,7 +178,8 @@ def main():
             print("")
             print("[!] Пометка отбора не найдена для глав: %s"
                   % ", ".join(str(i) for i in sorted(unknown_origin)))
-            print("    Восстановление: python tools/qc_backfill_provenance.py")
+            print("    Восстановление: впиши \"picked_by\" (risk/sample/only) вручную "
+                  "в qc_batches/meta/qc_NNNN.json этих глав")
 
         risk, sample = groups.get("risk"), groups.get("sample")
         if risk and sample:

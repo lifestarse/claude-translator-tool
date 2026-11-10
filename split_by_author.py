@@ -107,8 +107,25 @@ def main():
         if os.path.exists(ru_path(idx)):
             skipped.append((idx, why))
 
-    save_index(args.out, entries, data, skipped)
-    write_report(args.out, entries, data, skipped)
+    # Без --clean папка дописывается, а не пересобирается: index.json должен
+    # остаться полным, а не сжаться до глав этого запуска (--range). Глава,
+    # сменившая заголовок, легла новым файлом — старый убираем.
+    indexed = entries
+    if not args.clean:
+        old = load_json(os.path.join(args.out, "index.json"), {}) or {}
+        fresh = {e["index"]: e for e in entries}
+        indexed = list(entries)
+        for e in old.get("chapters", []):
+            new = fresh.get(e.get("index"))
+            if new is None:
+                indexed.append(e)
+            elif new["file"] != e.get("file"):
+                stale = os.path.join(args.out, e["file"])
+                if os.path.exists(stale):
+                    os.remove(stale)
+
+    save_index(args.out, indexed, data, skipped)
+    write_report(args.out, indexed, data, skipped)
 
     by_vol = {}
     for e in entries:

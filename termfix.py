@@ -100,7 +100,9 @@ def load_fixes():
         # китайского термина по исходникам; пустота значит, что термин не
         # нашёлся и зона правила неизвестна. Правило «Страж <- Защитник» с
         # пустой зоной ушло бы на весь корпус, где «Защитник» — чужой канон.
-        if "chapters" in f and not f["chapters"]:
+        # Отсутствующий ключ — та же пустая зона: README и реестр требуют зону
+        # явно, «по умолчанию везде» не бывает.
+        if not f.get("chapters"):
             unscoped.append(f["canon"])
             continue
         conflicts = self_conflict(f["canon"], f["find"])
@@ -248,6 +250,12 @@ def main():
         paragraphs = len([p for p in text.split("\n\n") if p.strip()])
         print("    гл.%04d: %s" % (idx, ", ".join(f["canon"] for f, _ in found)))
         if not args.dry_run:
+            # Задание пересобрано — прежние отметки .claim/.done/.fail к нему
+            # больше не относятся; иначе драйвер молча пропустит главу.
+            for ext in ("claim", "done", "fail"):
+                stale = os.path.join(FIX_DIR, "fix_%04d.%s" % (idx, ext))
+                if os.path.exists(stale):
+                    os.remove(stale)
             write_text(
                 os.path.join(FIX_DIR, "fix_%04d.md" % idx),
                 TEMPLATE.format(
