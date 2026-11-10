@@ -99,7 +99,8 @@ def main():
 
     os.makedirs(GFX_DIR, exist_ok=True)
     for f in os.listdir(GFX_DIR):
-        os.remove(os.path.join(GFX_DIR, f))
+        if f != ".gitkeep":
+            os.remove(os.path.join(GFX_DIR, f))
 
     tags, block, cur = [], [], 0
     items = sorted(jobs.items())

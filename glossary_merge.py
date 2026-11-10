@@ -12,7 +12,6 @@ picking one at random is how terminology drift starts.
 """
 
 import argparse
-import collections
 import os
 import sys
 
@@ -142,7 +141,7 @@ def main():
                 {"cn": v["cn"], "reason": v.get("reason", "без причины"), "batch": v["_batch"]}
             )
             continue
-        missing = [f for f in REQUIRED if not str(v.get(f, "")).strip()]
+        missing = [f for f in REQUIRED if not str(v.get(f) or "").strip()]
         if missing:
             malformed.append({"cn": v["cn"], "missing": missing, "batch": v["_batch"]})
             continue
@@ -173,10 +172,10 @@ def main():
         final.append(
             {
                 "cn": cn,
-                "ru": g["ru"].strip(),
-                "gender": g.get("gender", "").strip(),
-                "category": g.get("category", "").strip(),
-                "description": g.get("description", "").strip(),
+                "ru": str(g["ru"]).strip(),
+                "gender": str(g.get("gender") or "").strip(),
+                "category": str(g.get("category") or "").strip(),
+                "description": str(g.get("description") or "").strip(),
                 "source": "agent",
             }
         )
@@ -230,7 +229,7 @@ def main():
         if {x["cn"] for x in group} <= allowed_shared.get(ru, set()):
             continue  # documented synonyms, not a defect
         ru_collisions.append(
-            {"ru": ru, "terms": [{"cn": x["cn"], "category": x["category"]} for x in group]}
+            {"ru": ru, "terms": [{"cn": x["cn"], "category": x.get("category", "")} for x in group]}
         )
 
     save_json(

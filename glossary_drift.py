@@ -12,10 +12,11 @@
 """
 
 import io
+import os
 import json
 import sys
 
-from common import chapter_path, read_text, ru_path
+from common import ROOT, chapter_path, read_text, ru_path, split_paragraphs
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -25,7 +26,10 @@ CHAPTERS_PER_ENTRY = 8    # из скольких глав брать приме
 
 
 def main():
-    rep = json.load(io.open("final_check_report.json", encoding="utf-8"))
+    report = os.path.join(ROOT, "final_check_report.json")
+    if not os.path.exists(report):
+        raise SystemExit("Нет final_check_report.json — сначала python final_check.py")
+    rep = json.load(io.open(report, encoding="utf-8"))
     gloss = rep.get("glossary", {})
     rows = []
     for key, st in gloss.items():
@@ -46,8 +50,8 @@ def main():
             if shown >= SAMPLES_PER_ENTRY:
                 break
             try:
-                sp = read_text(chapter_path(idx)).split("\n\n")
-                rp = read_text(ru_path(idx)).split("\n\n")
+                sp = split_paragraphs(read_text(chapter_path(idx)))
+                rp = split_paragraphs(read_text(ru_path(idx)))
             except OSError:
                 continue
             if len(sp) != len(rp):

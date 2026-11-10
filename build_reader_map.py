@@ -7,8 +7,13 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sk = json.load(io.open(ROOT + r"\glossmap\skeleton.json", encoding="utf-8"))
-merged = json.load(io.open(ROOT + r"\glossmap\merged.json", encoding="utf-8"))
+for _need in ("skeleton.json", "merged.json"):
+    if not os.path.exists(os.path.join(ROOT, "glossmap", _need)):
+        raise SystemExit("Нет glossmap/%s — карта мира собирается из скелета "
+                         "co-occurrence и сведённых выводов агентов glossmap "
+                         "(см. README, стадия 10)." % _need)
+sk = json.load(io.open(os.path.join(ROOT, "glossmap", "skeleton.json"), encoding="utf-8"))
+merged = json.load(io.open(os.path.join(ROOT, "glossmap", "merged.json"), encoding="utf-8"))
 
 ORDER = ["Персонажи и титулы", "Юниты Линь", "Существа и виды",
          "Цивилизации и фракции", "Локации", "Оружие и устройства",
@@ -241,6 +246,6 @@ script = """<script>
 </script>"""
 
 page = head + "\n" + "\n".join(body) + "\n" + script
-out = ROOT + r"\reader_glossary.html"
+out = os.path.join(ROOT, "reader_glossary.html")
 io.open(out, "w", encoding="utf-8", newline="\n").write(page)
 print("записано:", out, "|", len(page), "байт |", total, "карточек |", n_rel, "связей")

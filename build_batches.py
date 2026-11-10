@@ -139,7 +139,8 @@ def main():
     os.makedirs(RU_DIR, exist_ok=True)
     if args.clean:
         for old in os.listdir(BATCH_DIR):
-            os.remove(os.path.join(BATCH_DIR, old))
+            if old != ".gitkeep":
+                os.remove(os.path.join(BATCH_DIR, old))
 
     # --only bypasses pending_chapters(), so re-check here. Otherwise an
     # explicit request quietly reintroduces a chapter whose file holds another

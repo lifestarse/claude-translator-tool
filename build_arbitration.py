@@ -48,7 +48,6 @@ STYLE_REF = "glossary_style_reference.md"
 
 QUOTES_PER_TERM = 3
 QUOTE_PAD = 26          # characters of context on each side
-MAX_CHAPTERS_SCANNED = 4885
 
 SENT_SPLIT_RE = re.compile(r"(?<=[。！？])")
 
@@ -67,10 +66,14 @@ def gather_context(cns):
     nobody runs.
     """
     stats = {cn: {"chapters": [], "mentions": 0, "quotes": []} for cn in cns}
-    for idx in range(1, MAX_CHAPTERS_SCANNED + 1):
+    chapters_dir = os.path.dirname(chapter_path(1))
+    indices = sorted(
+        int(m.group(1)) for m in (re.fullmatch(r"chapter_(\d+)\.txt", f)
+                                  for f in (os.listdir(chapters_dir)
+                                            if os.path.isdir(chapters_dir) else []))
+        if m)
+    for idx in indices:
         path = chapter_path(idx)
-        if not os.path.exists(path):
-            continue
         try:
             text = read_text(path)
         except OSError:
@@ -293,9 +296,12 @@ def apply_decisions(force):
 
     if applied:
         backup = OVERRIDES_FILE + ".bak"
-        shutil.copyfile(OVERRIDES_FILE, backup)
+        had_file = os.path.exists(OVERRIDES_FILE)
+        if had_file:
+            shutil.copyfile(OVERRIDES_FILE, backup)
         save_json(OVERRIDES_FILE, ov)
-        print("[+] Копия прежнего файла: %s" % os.path.basename(backup))
+        if had_file:
+            print("[+] Копия прежнего файла: %s" % os.path.basename(backup))
 
     print("=== АРБИТРАЖ ===")
     print("Решений прочитано : %d" % len(decisions))

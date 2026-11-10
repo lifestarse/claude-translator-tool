@@ -56,3 +56,16 @@ rules_audit.txt
 sync_review*.txt
 __pycache__/
 *.epub
+scrape_failures.json
+logs/
+.launcher_settings.json
+.launcher_settings.json.gateway.bak
+parallel_range_*.json
+parallel_ranges.json
+
+# Выходы сборок
+ru_by_author/
+reader_glossary.html
+cover.jpg
+glossary.md
+volume_map.json

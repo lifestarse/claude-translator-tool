@@ -8,6 +8,7 @@ the PowerShell window started for the selected task.
 
 import getpass
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -18,6 +19,7 @@ from common import ROOT, load_json, save_json
 SETTINGS_FILE = os.path.join(ROOT, ".launcher_settings.json")
 PROCESSES_FILE = os.path.join(ROOT, ".launcher_processes.json")
 WORKER_FILE = os.path.join(ROOT, "launcher_worker.ps1")
+LOG_DIR = os.path.join(ROOT, "logs")
 
 DEFAULT_MODELS = [
     {"name": "sonnet", "key_env": "ANTHROPIC_API_KEY", "description": "быстрый перевод"},
@@ -32,12 +34,19 @@ TASKS = {
 
 
 def ask(prompt, default=""):
-    value = input("%s%s: " % (prompt, " [%s]" % default if default != "" else "")).strip()
+    try:
+        value = input("%s%s: " % (prompt, " [%s]" % default if default != "" else "")).strip()
+    except EOFError:
+        # Ввод закрыт (запуск без терминала) — выходим, а не падаем трейсбеком.
+        raise SystemExit("\nВвод закрыт — диспетчер завершён.")
     return value or default
 
 
 def ask_yes_no(prompt, default=False):
-    value = input("%s [%s]: " % (prompt, "Y/n" if default else "y/N")).strip().lower()
+    try:
+        value = input("%s [%s]: " % (prompt, "Y/n" if default else "y/N")).strip().lower()
+    except EOFError:
+        raise SystemExit("\nВвод закрыт — диспетчер завершён.")
     return default if not value else value in ("y", "yes", "д", "да")
 
 
@@ -85,7 +94,7 @@ def find_model(settings, name):
 
 
 def pid_alive(pid):
-    """Check a Windows PID without ever sending it a signal."""
+    """Is the PID alive? Never sends a real signal (kill 0 only probes)."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -96,6 +105,15 @@ def pid_alive(pid):
             capture_output=True, text=True, errors="replace",
         )
         return result.returncode == 0 and ('"%d"' % pid) in result.stdout
+    try:
+        # Завершившийся потомок этого же диспетчера висит зомби и на kill(0)
+        # отвечает «жив» — сначала забираем его статус.
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass        # не наш потомок — судим по kill(0)
+    except OSError:
+        return False
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, OSError):
@@ -130,29 +148,49 @@ class TaskManager:
         if busy:
             print("Сначала останови: %s." % ", ".join(TASKS[n]["label"] for n in busy))
             return
-        if not os.path.isfile(WORKER_FILE) or not os.path.isfile(os.path.join(ROOT, script)):
+        if not os.path.isfile(os.path.join(ROOT, script)) or \
+                (os.name == "nt" and not os.path.isfile(WORKER_FILE)):
             print("Не найден файл запуска для «%s»." % spec["label"])
             return
-        command = [
-            "powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", WORKER_FILE, "-Python", sys.executable,
-            "-WorkingDirectory", ROOT, "-Script", os.path.join(ROOT, script),
-            "-TaskLabel", spec["label"], "-ScriptArgs",
-        ] + list(args)
         env = os.environ.copy()
         env.update(self.session_env)
-        flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | \
-                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        try:
-            proc = subprocess.Popen(command, cwd=ROOT, env=env, shell=False,
-                                    creationflags=flags)
-        except OSError as exc:
-            print("Не удалось открыть окно PowerShell: %s" % exc)
-            return
+        if os.name == "nt":
+            command = [
+                "powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", WORKER_FILE, "-Python", sys.executable,
+                "-WorkingDirectory", ROOT, "-Script", os.path.join(ROOT, script),
+                "-TaskLabel", spec["label"],
+            ] + list(args)
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | \
+                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            try:
+                proc = subprocess.Popen(command, cwd=ROOT, env=env, shell=False,
+                                        creationflags=flags)
+            except OSError as exc:
+                print("Не удалось открыть окно PowerShell: %s" % exc)
+                return
+            where = "в новом окне PowerShell"
+        else:
+            # Без оконной системы задача уходит в фон своей сессией (её не
+            # убьёт закрытие терминала), вывод — в журнал logs/<задача>.log.
+            os.makedirs(LOG_DIR, exist_ok=True)
+            log_path = os.path.join(LOG_DIR, "%s.log" % name)
+            env["PYTHONIOENCODING"] = "utf-8"
+            try:
+                with open(log_path, "a", encoding="utf-8") as log_file:
+                    proc = subprocess.Popen(
+                        [sys.executable, "-u", os.path.join(ROOT, script)] + list(args),
+                        cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                        stdout=log_file, stderr=subprocess.STDOUT,
+                        start_new_session=True)
+            except OSError as exc:
+                print("Не удалось запустить: %s" % exc)
+                return
+            where = "в фоне, журнал %s" % os.path.relpath(log_path, ROOT)
         self.tasks[name] = {"pid": proc.pid, "group": spec["group"], "script": script,
                             "started": time.strftime("%Y-%m-%d %H:%M:%S")}
         self.save()
-        print("«%s» открыта в новом окне PowerShell (PID %d)." % (spec["label"], proc.pid))
+        print("«%s» запущена %s (PID %d)." % (spec["label"], where, proc.pid))
 
     def show(self):
         self.refresh()
@@ -170,11 +208,22 @@ class TaskManager:
         if not rec:
             print("Эта задача уже не запущена.")
             return
-        result = subprocess.run(["taskkill", "/PID", str(rec["pid"]), "/T", "/F"],
-                                capture_output=True, text=True, errors="replace")
-        if result.returncode:
-            print("Не удалось остановить: %s" % result.stderr.strip())
-            return
+        if os.name == "nt":
+            result = subprocess.run(["taskkill", "/PID", str(rec["pid"]), "/T", "/F"],
+                                    capture_output=True, text=True, errors="replace")
+            if result.returncode:
+                print("Не удалось остановить: %s" % result.stderr.strip())
+                return
+        else:
+            try:
+                # Задача — лидер своей сессии (start_new_session), так что
+                # группа гасится целиком, вместе с дочерними claude.
+                os.killpg(int(rec["pid"]), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                print("Не удалось остановить: %s" % exc)
+                return
         self.tasks.pop(name, None)
         self.save()
         print("«%s» остановлена." % TASKS[name]["label"])

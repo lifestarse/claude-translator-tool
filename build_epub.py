@@ -17,17 +17,19 @@ from finalize import TITLE_RE
 # выглядит как чужая книга. Здесь стояло «4,6 миллиарда лет эволюции» — без
 # «симфонии» и с запятой вместо точки, — а в подзаголовке «4.6 Billion Years of
 # Symphony» вместо «4.6 Billion Year Symphony of Evolution».
-BOOK_TITLE = "НАЗВАНИЕ ТАЙТЛА"  # см. BOOK.md
-BOOK_SUBTITLE = "进化的四十六亿重奏 · 4.6 Billion Year Symphony of Evolution"
-# Написание псевдонима сведено с карточкой на RanobeLIB: там автор заведён как
-# Xiangwei Xingzhe. «Phase Change» было смысловым переводом и ни с чем не билось.
-BOOK_AUTHOR = "Xiangwei Xingzhe (相位行者)"
+# Значения штампует setup_book.py из BOOK.md.
+BOOK_TITLE = "{{BOOK_TITLE}}"
+BOOK_SUBTITLE = "{{BOOK_ORIG}} · {{BOOK_EN}}"
+# Написание автора сводить с карточкой на RanobeLIB слово в слово.
+BOOK_AUTHOR = "{{BOOK_AUTHOR}}"
 BOOK_LANG = "ru"
 BOOK_ID = f"urn:uuid:{uuid.uuid4()}"
-DEFAULT_EPUB_PATTERN = "4.6_billion_year_symphony_of_evolution_ru_{min_idx}-{max_idx}.epub"
-COVER_IMAGE_PATH = r"C:\Users\user\Desktop\Billion-Year-Symphony-of-Evolution.jpg"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_EPUB_PATTERN = os.path.join(ROOT, "book_ru_{min_idx}-{max_idx}.epub")
+# Обложка: положи cover.jpg рядом со скриптами. Нет файла — книга без обложки.
+COVER_IMAGE_PATH = os.path.join(ROOT, "cover.jpg")
 
-RU_DIR = "ru"
+RU_DIR = os.path.join(ROOT, "ru")
 
 CSS_CONTENT = """@charset "utf-8";
 body {

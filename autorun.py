@@ -50,6 +50,7 @@ from common import (
     load_excluded,
     read_text,
     ru_path,
+    save_json,
     split_paragraphs,
     validate_translation,
     write_text,
@@ -406,7 +407,7 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet"):
         "--permission-mode", "bypassPermissions",
         "--output-format", "json",
     ]
-    rate_waits, net_waits, hard_fails = 0, 0, 0
+    rate_waits, net_waits, hard_fails, timeouts = 0, 0, 0, 0
     while True:
         try:
             proc = subprocess.run(
@@ -416,6 +417,11 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet"):
             out = (proc.stdout or "") + "\n" + (proc.stderr or "")
             kind = classify(proc.stdout, proc.stderr, proc.returncode)
         except subprocess.TimeoutExpired:
+            # Таймаут — зависание, а не обрыв связи: бесконечно повторять его
+            # нельзя, иначе одна вечно виснущая глава держит слот навсегда.
+            timeouts += 1
+            if timeouts >= 3:
+                return False, "таймаут %d раза подряд" % timeouts
             out, kind = "", "network"
         except OSError as exc:
             out, kind = str(exc), "network"
@@ -679,6 +685,12 @@ def main():
         STATE_FILE = os.path.join(ROOT, "autorun_state_%s.json" % args.slot)
         LOG_FILE = os.path.join(ROOT, "autorun_%s.log" % args.slot)
         USAGE_FILE = os.path.join(ROOT, "autorun_usage_%s.jsonl" % args.slot)
+        if args.range:
+            # Участок слота — для сводки parallel_status.py. Свой файл на слот:
+            # общий журнал при одновременном старте шестнадцати слотов
+            # затирал бы записи друг друга.
+            save_json(os.path.join(ROOT, "parallel_range_%s.json" % args.slot),
+                      {"slot": args.slot, "lo": args.range[0], "hi": args.range[1]})
 
     state = load_state()
     todo = pending_chapters()

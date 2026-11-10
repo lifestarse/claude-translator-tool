@@ -5,13 +5,14 @@
     python parallel_status.py --watch      # обновляется каждые 30 с (Ctrl+C — выход)
     python parallel_status.py --watch 10   # каждые 10 с
 
-Читает parallel_ranges.json (границы участков), логи autorun_NN.log
+Читает parallel_range_NN.json (границы участков, пишет autorun), логи autorun_NN.log
 (последняя строка = чем слот занят) и ru/ (сколько глав участка уже на диске).
 Ничего не пишет.
 """
 
 import argparse
 import datetime as dt
+import glob
 import json
 import os
 import re
@@ -27,11 +28,26 @@ RANGES = os.path.join(ROOT, "parallel_ranges.json")
 DONE_RE = re.compile(r"готово \|")
 
 
+def load_ranges():
+    """Участки слотов: parallel_range_NN.json (пишет autorun.py --range --slot)
+    и, если есть, общий parallel_ranges.json, составленный вручную."""
+    ranges = {}
+    if os.path.exists(RANGES):
+        with open(RANGES, encoding="utf-8") as fh:
+            for r in json.load(fh):
+                ranges[str(r["slot"])] = r
+    for path in glob.glob(os.path.join(ROOT, "parallel_range_*.json")):
+        with open(path, encoding="utf-8") as fh:
+            r = json.load(fh)
+        ranges[str(r["slot"])] = r
+    return [ranges[k] for k in sorted(ranges)]
+
+
 def snapshot():
-    if not os.path.exists(RANGES):
-        raise SystemExit("Нет parallel_ranges.json — параллельный прогон не запускался.")
-    with open(RANGES, encoding="utf-8") as fh:
-        ranges = json.load(fh)
+    ranges = load_ranges()
+    if not ranges:
+        raise SystemExit("Нет участков слотов — параллельный прогон "
+                         "(autorun.py --range LO HI --slot NN) не запускался.")
 
     excluded = load_excluded()
     total_done = total_all = 0

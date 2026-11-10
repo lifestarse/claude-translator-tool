@@ -236,9 +236,15 @@ def main():
         keep = set(args.only)
         tasks = [t for t in tasks if t["chapter"] in keep]
         missing = keep - {t["chapter"] for t in tasks}
+        already = missing & set(done if not args.redo else [])
+        missing -= already
+        if already:
+            print("[!] Уже применены (applied), для повтора добавь --redo: %s"
+                  % ", ".join(str(i) for i in sorted(already)))
         if missing:
             print("[!] В qcfix_tasks.json нет глав: %s"
                   % ", ".join(str(i) for i in sorted(missing)))
+        if missing or (already and not tasks):
             raise SystemExit(1)
 
     problems, prepared, rendered = [], [], {}

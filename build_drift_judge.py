@@ -57,7 +57,7 @@ def samples_for(cn, misses):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--report", default="final_check_report.json")
+    ap.add_argument("--report", default=os.path.join(ROOT, "final_check_report.json"))
     args = ap.parse_args()
 
     rep = json.load(io.open(args.report, encoding="utf-8"))
@@ -70,6 +70,11 @@ def main():
     rows.sort(reverse=True)
 
     os.makedirs(DRIFT_DIR, exist_ok=True)
+    # Пакеты нумеруются заново с 001 — старые задания, вердикты и захваты
+    # с теми же номерами иначе заставили бы драйвер пропустить новые пакеты.
+    for old in os.listdir(DRIFT_DIR):
+        if old.startswith(("judge_", "verdict_")) or old.endswith(".claim"):
+            os.remove(os.path.join(DRIFT_DIR, old))
     index, tag, block = [], 0, []
     for n, (m, key, misses) in enumerate(rows, 1):
         ru_name, cn = key.rsplit(" (", 1)

@@ -130,6 +130,10 @@ def finalize_one(idx):
     text, _ = normalize_title(text)
     if missing or extra:
         return "fail", "пропущены абзацы %s, лишние номера %s" % (missing[:5], extra[:5]), text
+    if unmarked:
+        # Абзац без номера перед первым маркером, когда [1] уже занят: куда его
+        # приклеить, неизвестно, а молча выбросить — потерять текст.
+        return "fail", "абзацев без маркера в начале главы: %d" % unmarked, text
     return "ok", "склеено разрывов: %d" % rejoined, text
 
 

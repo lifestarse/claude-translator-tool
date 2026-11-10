@@ -26,7 +26,6 @@ import sys
 from common import (
     CHAPTERS_DIR,
     RU_DIR,
-    chapter_path,
     read_text,
     split_paragraphs,
     write_text,

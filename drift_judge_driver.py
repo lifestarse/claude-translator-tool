@@ -65,7 +65,8 @@ def main():
             got = len(json.load(open(verdict, encoding="utf-8"))["verdicts"])
             log(args.slot, "пакет %03d: вердиктов %d" % (tag, got))
         except (OSError, ValueError, KeyError):
-            log(args.slot, "пакет %03d: вердикт не записан или битый" % tag)
+            log(args.slot, "пакет %03d: вердикт не записан или битый (код агента %s: %s)"
+                % (tag, proc.returncode, (proc.stderr or proc.stdout or "").strip()[-160:]))
             os.remove(os.path.join(DRIFT_DIR, "judge_%03d.claim" % tag))
     log(args.slot, "конец")
 

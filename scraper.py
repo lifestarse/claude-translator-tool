@@ -12,6 +12,7 @@ Differences from the previous version, all of which were real bugs:
 """
 
 import argparse
+import os
 import random
 import threading
 import time
@@ -24,6 +25,7 @@ from common import (
     CATALOG_FILE,
     CHAPTERS_DIR,
     MANIFEST_FILE,
+    ROOT,
     chapter_path,
     clean_paragraphs,
     load_json,
@@ -391,8 +393,6 @@ def main():
     ap.add_argument("--verify", action="store_true", help="только проверить, ничего не качать")
     args = ap.parse_args()
 
-    import os
-
     os.makedirs(CHAPTERS_DIR, exist_ok=True)
     catalog = fetch_catalog(force=args.refresh_catalog)
 
@@ -401,7 +401,7 @@ def main():
 
     failures = run_download(catalog, args.threads, args.start, args.end)
     if failures:
-        save_json("scrape_failures.json", failures)
+        save_json(os.path.join(ROOT, "scrape_failures.json"), failures)
         log("")
         log("[!] Не удалось скачать %d глав. Причины записаны в scrape_failures.json:" % len(failures))
         reasons = {}

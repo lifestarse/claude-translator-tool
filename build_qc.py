@@ -908,8 +908,8 @@ def do_adopt(terms):
         save_json(os.path.join(META_DIR, "qc_%04d.json" % idx), rec)
         n += 1
     print("[+] Отпечатки записаны для %d заданий, лежащих на диске." % n)
-    print("    Пометки отбора не тронуты. Восстановить утраченные: "
-          "python tools/qc_backfill_provenance.py")
+    print("    Пометки отбора не тронуты. Утраченные (\"?\") впиши вручную "
+          "в поле picked_by файлов qc_batches/meta/qc_NNNN.json")
 
 
 def main():

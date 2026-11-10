@@ -24,11 +24,12 @@ import argparse
 import difflib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
 
-from common import chapter_path, read_text, ru_path, validate_translation
+from common import ROOT, chapter_path, read_text, validate_translation
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -87,28 +88,50 @@ def main():
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
-    detail = json.load(io.open("replacement_detail.json", encoding="utf-8"))
+    detail_file = os.path.join(ROOT, "replacement_detail.json")
+    if os.path.exists(detail_file):
+        detail = json.load(io.open(detail_file, encoding="utf-8"))
+    else:
+        print("[i] Нет replacement_detail.json (гистограмма замен по git) — "
+              "откат пар не делается, только точечные ремонты.")
+        detail = {}
     per_file = {}
     for key, files in detail.items():
         old, new = key.split(" => ", 1)
         for path in files:
-            per_file.setdefault(path, []).append((old, new))
+            per_file.setdefault(path.replace("\\", "/"), []).append((old, new))
+    # Точечные ремонты не зависят от гистограммы: глава из CONTEXT_REPAIRS
+    # обязана попасть в обход, даже если в detail её нет.
+    for ch, _rx, _rep in CONTEXT_REPAIRS:
+        per_file.setdefault("ru/chapter_%04d.txt" % ch, [])
 
     touched, failed, total = 0, [], 0
     for path in sorted(per_file):
         idx = int(path[11:15])
         want = {(o, n) for o, n in per_file[path] if classify(o, n, idx)}
         ctx = [(rx, rep) for ch, rx, rep in CONTEXT_REPAIRS if ch == idx]
-        cur = read_text(path)
+        full = os.path.join(ROOT, path)
+        if not os.path.exists(full):
+            continue
+        cur = read_text(full)
         need_ersh = ERSH_RE.search(cur)
         if not want and not ctx and not need_ersh:
             continue
 
         plan = []
         if want:
-            head = subprocess.run(["git", "show", "HEAD:" + path],
-                                  capture_output=True, encoding="utf-8",
-                                  errors="replace").stdout
+            res = subprocess.run(["git", "show", "HEAD:" + path], cwd=ROOT,
+                                 capture_output=True, encoding="utf-8",
+                                 errors="replace")
+            head = res.stdout
+            if res.returncode or not head.strip():
+                # Без базиса из git дифф пуст, и откат молча ничего бы не
+                # сделал. ru/ должен быть под git, чтобы этот движок работал.
+                print("[!] %s: нет версии в HEAD (%s) — откат пар пропущен"
+                      % (path, (res.stderr or "пусто").strip()[:80]))
+                failed.append((idx, ["нет базиса в git"]))
+                want = set()
+        if want:
             a, b = head.split(), cur.split()
             b_pos = list(re.finditer(r"\S+", cur))
             sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
@@ -150,7 +173,7 @@ def main():
             failed.append((idx, problems))
             print("    [!] НЕ ЗАПИСАНО, приёмка: %s" % "; ".join(problems))
             continue
-        io.open(path, "w", encoding="utf-8", newline="\n").write(cur)
+        io.open(full, "w", encoding="utf-8", newline="\n").write(cur)
         touched += 1
 
     print("")

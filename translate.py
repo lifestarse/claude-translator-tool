@@ -14,7 +14,6 @@ fails it is recorded as failed rather than written.
 
 import argparse
 import os
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,14 +34,17 @@ from common import (
     write_text,
 )
 
-STATE_FILE = "translate_state.json"
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "translate_state.json")
+GLOSSARY_V2_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "glossary_v2.json")
 DEFAULT_MODEL = "claude-opus-5"
 MAX_TOKENS = 32000
 
 # $ per 1M tokens: (input, output, cache_write_5m, cache_read)
 PRICING = {
+    "claude-opus-5-5": (4.00, 20.00, 5.00, 0.40),
     "claude-opus-5": (5.00, 25.00, 6.25, 0.50),
-    "claude-sonnet-5": (3.00, 15.00, 3.75, 0.30),
+    "claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.20),
+    "claude-sonnet-5": (2.00, 10.00, 2.50, 0.20),
     "claude-haiku-4-5": (1.00, 5.00, 1.25, 0.10),
 }
 
@@ -316,7 +318,13 @@ def main():
     os.makedirs(RU_DIR, exist_ok=True)
     client = anthropic.Anthropic(max_retries=5, timeout=600.0)
 
-    curated, auto, pronoun_rules = load_glossary()
+    # Рабочий глоссарий конвейера — glossary_v2.json (glossary_merge). Старый
+    # glossary.json — только запасной вариант, как в build_batches.load_terms.
+    v2 = load_json(GLOSSARY_V2_FILE, None) or {}
+    if v2.get("glossary"):
+        curated, auto, pronoun_rules = v2["glossary"], [], v2.get("pronoun_rules", {})
+    else:
+        curated, auto, pronoun_rules = load_glossary()
     system_prompt = build_system_prompt(curated, pronoun_rules)
     log(
         "[+] Глоссарий: %d выверенных терминов, %d авто-терминов; системный промпт %d символов."
