@@ -7,7 +7,7 @@ import re
 import html
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 import author_numbers
 from finalize import TITLE_RE
@@ -387,7 +387,7 @@ def build_epub(max_chapter=None):
     <dc:creator>{html.escape(BOOK_AUTHOR)}</dc:creator>
     <dc:description>Русский перевод глав {min_idx}–{max_idx} новеллы {html.escape(BOOK_TITLE)}</dc:description>
     {cover_meta}
-    <meta property="dcterms:modified">{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}</meta>
+    <meta property="dcterms:modified">{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}</meta>
   </metadata>
   <manifest>
     {manifest_xml}

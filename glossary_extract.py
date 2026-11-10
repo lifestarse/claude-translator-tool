@@ -25,9 +25,9 @@ Measured on 3411 chapters: 44468 raw candidates -> 32807 after fragment removal
 import argparse
 import collections
 import os
-import re
 import sys
 
+from lang import LANG
 from common import CHAPTERS_DIR, ROOT, load_glossary, read_text, save_json
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -36,23 +36,20 @@ if hasattr(sys.stdout, "reconfigure"):
 CANDIDATES_FILE = os.path.join(ROOT, "glossary_candidates.json")
 BATCH_DIR = os.path.join(ROOT, "glossary_batches")
 
-CJK_RUN = re.compile(r"[㐀-䶿一-鿿]+")
 
 # Five, not four. The book coins terms that long (織夢者夢食), and with a
 # 4-character ceiling their fragments -- 織夢者夢, 夢者夢食 -- have no longer
 # form to be compared against, so drop_fragments() cannot recognise them and
 # they reach the judges as candidates. Same for 析者 (tail of 分析者) and
 # 之域 (tail of 秩序之域).
-NGRAM_LENGTHS = (2, 3, 4, 5)
+NGRAM_LENGTHS = LANG.ngrams
 
 # The book announces its own coinages: "它們被稱為'塵鱷'", "琳把它稱為……'霧綿'",
 # "就叫做'藏憶者'好了". Catching those verbs gives far higher precision than any
 # statistic, and it catches names that appear too few times to clear the
 # dispersion thresholds.
-NAMING_RE = re.compile(
-    r"(?:叫做|叫作|稱為|稱作|稱呼為|被稱為|被稱作|命名為|名字為|名為|簡稱)"
-    r"\s*[‘'\"「『]?([㐀-䶿一-鿿]{2,6})[’'\"」』]?"
-)
+# Сами конструкции именования зависят от языка и живут в lang.py.
+NAMING_RES = LANG.naming_res()
 
 # Tuned against the measurements in the docstring.
 MIN_FREQ = 40
@@ -71,10 +68,10 @@ def chapter_files():
 
 
 def iter_ngrams(text):
-    for run in CJK_RUN.findall(text):
-        for length in NGRAM_LENGTHS:
-            for i in range(len(run) - length + 1):
-                yield run[i : i + length]
+    """Кандидаты по правилам языка оригинала: n-граммы знаков для китайского,
+    японского и тайского, слова для корейского и арабского, цепочки слов с
+    заглавной для алфавитных языков."""
+    return LANG.iter_candidates(text)
 
 
 def count_pass(files):
@@ -102,8 +99,11 @@ def count_pass(files):
             seen.add(gram)
         for gram in seen:
             docfreq[gram] += 1
-        for hit in NAMING_RE.findall(text):
-            named[hit] += 1
+        for rx, _quoted in NAMING_RES:
+            for m in rx.finditer(text):
+                hit = LANG.clean_term(m.group(1))
+                if hit:
+                    named[hit] += 1
 
         if n % 500 == 0:
             freq = collections.Counter({g: c for g, c in freq.items() if c >= prune_floor})
@@ -120,6 +120,9 @@ def drop_fragments(counts):
     lookup. Comparing every candidate against every other is O(n^2) and does not
     finish on 44k candidates -- that is not a hypothetical, it timed out here.
     """
+    if LANG.extract != "ngram":
+        # Слова и цепочки слов уже целые единицы: обрезков n-грамм среди них нет.
+        return dict(counts)
     chars = set()
     for gram in counts:
         chars.update(gram)

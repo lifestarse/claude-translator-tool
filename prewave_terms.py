@@ -27,9 +27,9 @@ Verdicts go to glossary_judged/, where glossary_merge.py already looks.
 import argparse
 import collections
 import os
-import re
 import sys
 
+from lang import LANG
 from common import (
     CHAPTERS_DIR,
     ROOT,
@@ -49,22 +49,10 @@ GLOSSARY_V2 = os.path.join(ROOT, "glossary_v2.json")
 ACCUMULATED = os.path.join(ROOT, "glossary_accumulated.json")
 STYLE_REF = "glossary_style_reference.md"
 
-CJK = "[㐀-䶿一-鿿]"
-
-# Quoted capture first: the quotes give exact boundaries. Unquoted capture is a
-# fallback and is deliberately shorter -- without a closing mark there is
-# nothing to stop it swallowing the rest of the clause, which is how
-# 巨盾觸須的扁長觸 and 升降梯的東西 turned up in the probe.
-NAMING = "(?:叫做|叫作|稱為|稱作|稱呼為|被稱為|被稱作|命名為|名字為|名為|簡稱|取名為|起名為|起了個名字叫|起了名字叫|稱之為)"
-QUOTED_RE = re.compile(NAMING + r"\s*[‘'\"「『](" + CJK + r"{2,8})[’'\"」』]")
-BARE_RE = re.compile(NAMING + r"\s*(" + CJK + r"{2,6})")
-
-# Generic heads. 叫做什麽 already taught this lesson once: without a stop list
-# the construction promotes the question word, not the name.
-GENERIC = (
-    "東西", "玩意", "地方", "感覺", "樣子", "名字", "什麽", "什麼", "時候",
-    "事情", "傢伙", "傢夥", "家夥", "一個", "這個", "那個", "自己",
-)
+# Конструкции именования («назвали X», 叫做X, 'X'라고 불렀다) и стоп-слова
+# зависят от языка оригинала и живут в lang.py. Захват в кавычках точнее:
+# кавычки дают границы; без них захват нарочно короче.
+NAMING_RES = LANG.naming_res()
 
 CONTEXT = 60
 MAX_CONTEXTS = 2
@@ -85,23 +73,8 @@ def taken_names():
 
 
 def clean(term):
-    """Trim a capture down to the name, or reject it if nothing is left.
-
-    A capture running past the name into the clause -- 巨盾觸須的扁長觸 -- used to
-    be thrown away whole. But 的 and 了 mark exactly where the name ends, so the
-    prefix before them is the term: 巨盾觸須. Rejecting instead of trimming cost
-    real coinages; chapter 54 came back with 巨盾觸須 invented by the translator
-    because the judge never saw it.
-    """
-    for stop in ("的", "了"):
-        if stop in term:
-            term = term.split(stop, 1)[0]
-    if len(term) < 2:
-        return None
-    for g in GENERIC:
-        if term == g or term.startswith(g) or term.endswith(g):
-            return None
-    return term
+    """Обрезать захват до имени или отвергнуть — правила в lang.py."""
+    return LANG.clean_term(term)
 
 
 def harvest(lo, hi):
@@ -112,7 +85,7 @@ def harvest(lo, hi):
         if not os.path.exists(path):
             continue
         text = read_text(path)
-        for rx, quoted in ((QUOTED_RE, True), (BARE_RE, False)):
+        for rx, quoted in NAMING_RES:
             for m in rx.finditer(text):
                 term = clean(m.group(1))
                 if not term:
@@ -151,14 +124,14 @@ def corpus_docfreq(terms):
 
 JUDGE_TEMPLATE = """# Задание: вынести вердикт по терминам глав {lo}–{hi}
 
-Это термины, которые книга **вводит сама** конструкциями вида
-`叫做X` / `取名為‘X’` / `稱之為‘X’` в главах {lo}–{hi}. Их надо перевести
+Это термины, которые книга **вводит сама** конструкциями именования
+(«назвали X», «по имени X», «известный как X») в главах {lo}–{hi}. Их надо перевести
 до того, как главы уйдут переводчикам, иначе каждый переводчик придумает
 своё название и терминология разъедется.
 
 ## Что сделать
 
-1. Прочитай `{style_ref}` — там 55 выверенных терминов, держись их манеры.
+1. Прочитай `{style_ref}` — там правила и принятые решения, держись их манеры.
 2. Прочитай `{batch_file}` — список кандидатов с контекстами.
 3. По каждому вынеси вердикт.
 4. Запиши результат в `{out_file}` в формате:

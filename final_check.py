@@ -243,7 +243,7 @@ def main():
     print("=== ФИНАЛЬНАЯ ПРОВЕРКА ===")
     print("Последний номер главы:   %d" % n_max)
     print("Исключено:               %d" % len(excluded))
-    print("Проверено пар CN-RU:     %d" % checked)
+    print("Проверено пар оригинал-RU:%d" % checked)
     print("Канон терминов:          %s" % ("пропущен (--skip-terms)" if args.skip_terms
                                            else "%d правил" % len(fixes)))
     print("Глоссарий:               %s" % ("пропущен (--skip-glossary)" if args.skip_glossary

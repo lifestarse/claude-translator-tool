@@ -40,8 +40,8 @@ import random
 import re
 import sys
 
+from lang import LANG
 from common import (
-    CJK_RE,
     ROOT,
     blob_fingerprint,
     chapter_path,
@@ -301,7 +301,7 @@ def paragraph_outliers(src_p, ru_p):
     """Same measure verify.py uses, but reported instead of thresholded."""
     out = []
     for i, (src, ru) in enumerate(zip(src_p, ru_p), 1):
-        if len(src) < 12:
+        if len(src) < LANG.short_para:
             continue
         r = len(ru) / len(src)
         if r < 0.35 or r > 9.0:
@@ -375,7 +375,7 @@ def assess(idx, terms):
     standalone = standalone_terms(hits, source)
     outliers = paragraph_outliers(src_p, ru_p)
     spam = sorted({m.group(0) for m in RU_SPAM_RE.finditer(translated)})
-    cjk = len(CJK_RE.findall(translated))
+    cjk = LANG.leftover(translated)
     ratio = len(translated) / max(len(source), 1)
 
     return {
@@ -619,14 +619,14 @@ def flag_block(a, df=None):
             "Признак сжатия по всей главе." % a["ratio"]
         )
     if a["cjk"]:
-        lines.append("- Осталось китайских иероглифов: %d" % a["cjk"])
+        lines.append("- Осталось %s: %d" % (LANG.leftover_name, a["cjk"]))
     if df is not None and PRONOUN_DRIFT_IN_TASKS:
         for t, gender, pron in pronoun_drift(a, df)[:4]:
             lines.append(
                 "- Рядом с «%s» (род по глоссарию: %s) стоят местоимения %s. "
                 "Сигнал сырой и часто ложный — местоимение может относиться к "
                 "другому существительному, а поле «род» в глоссарии бывает "
-                "проставлено по китайскому 它, а не по русскому имени. Проверь, "
+                "проставлено по местоимению оригинала, а не по русскому имени. Проверь, "
                 "но не правь текст только ради согласия с глоссарием."
                 % (t["ru"], gender, ", ".join("«%s»" % p for p in pron))
             )
@@ -842,7 +842,7 @@ def calibrate(assessed, rates, verdict_of):
                      ("канон недоиспользован", lambda a: len(a["underused"])),
                      ("выбросы по абзацам", lambda a: len(a["outliers"])),
                      ("реклама", lambda a: len(a["spam"])),
-                     ("иероглифы", lambda a: a["cjk"]),
+                     ("остатки оригинала", lambda a: a["cjk"]),
                      ("низкий коэффициент",
                       lambda a: 1 if a["ratio"] < LOW_RATIO_EDGE else 0)):
         n = sum(1 for a in assessed if fn(a))
@@ -1040,7 +1040,7 @@ def main():
         if a["spam"]:
             sig.append("реклама")
         if a["cjk"]:
-            sig.append("иероглифов: %d" % a["cjk"])
+            sig.append("остатков оригинала: %d" % a["cjk"])
         if a["ratio"] < LOW_RATIO_EDGE:
             sig.append("короткий")
         print("%-8d %7.2f %7.2f %8d %8d %6s %s"

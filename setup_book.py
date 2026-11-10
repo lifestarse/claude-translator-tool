@@ -19,13 +19,16 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
+from lang import LANG  # noqa: E402
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 FILES = sorted(glob.glob(os.path.join(ROOT, ".claude", "agents", "*.md"))) + [
     os.path.join(ROOT, f) for f in ("translate.py", "build_reader_map.py", "build_epub.py")]
-PLACEHOLDERS = ("BOOK_BRIEF", "BOOK_TITLE", "BOOK_ORIG", "BOOK_EN", "BOOK_AUTHOR")
+PLACEHOLDERS = ("BOOK_BRIEF", "BOOK_TITLE", "BOOK_ORIG", "BOOK_EN", "BOOK_AUTHOR",
+                "SRC_ADJ_F", "SRC_FROM", "SRC_TRANSCRIPTION", "SRC_RATIO")
 
 
 def main():
@@ -50,7 +53,14 @@ def main():
 
     values = {"BOOK_BRIEF": brief, "BOOK_TITLE": title,
               "BOOK_ORIG": field("Оригинал"), "BOOK_EN": field("Английское"),
-              "BOOK_AUTHOR": field("Автор")}
+              "BOOK_AUTHOR": field("Автор"),
+              # Язык оригинала (BOOK.md -> lang.py): «китайской», «с китайского».
+              "SRC_ADJ_F": LANG.adj_f, "SRC_FROM": LANG.from_,
+              "SRC_TRANSCRIPTION": LANG.transcription,
+              "SRC_RATIO": "от %.1f до %.1f объёма оригинала"
+                           % (LANG.min_ratio, LANG.max_ratio)}
+    print("ЯЗЫК  : %s (%s)%s" % (LANG.name, LANG.code,
+          "" if LANG.calibrated else " — норма объёма оценочная, см. python lang.py"))
 
     print("BRIEF :", brief[:100])
     print("TITLE :", title)
