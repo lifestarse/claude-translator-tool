@@ -24,6 +24,7 @@ from common import (
     split_paragraphs,
     write_text,
 )
+from lang import LANG
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -43,6 +44,44 @@ TITLE_RE = re.compile(
     r"^.*?глав[аы]\s*(\d+)(?:\s*[-–—]\s*(\d+))?\s*(?:[:.—–]+\s*|\s+)", re.I)
 # Tool-call serialisation that leaked into three files of the first wave.
 JUNK_RE = re.compile(r"</?(?:antml:)?(?:content|invoke|parameter|function_calls)\b[^>]*>")
+
+# Предложение, разрезанное переводчиком между абзацами: абзац кончается запятой,
+# следующий начинается со строчной, хотя в оригинале первый абзац закончен
+# («…할 무렵.» — «когда…»). Так вышло в 308 местах 109 глав из 262: агент
+# пристёгивал придаточное к главному предложению следующего абзаца. Склеить
+# абзацы нельзя — они идут 1:1 с оригиналом, — поэтому каждый становится
+# законченной фразой, как и у автора: запятая -> точка, следующий абзац — с
+# заглавной, союз с конца первого («…но,») переезжает в начало второго.
+# Разрыв самого оригинала (его абзац не закончен) не трогаем: его склеивают
+# обе стороны сразу — tools/merge_broken_paragraphs.py.
+SRC_END = set(LANG.end or "") | set(".!?…。！？」』”’)]】")
+OPEN_END_RE = re.compile(r"(?:[,;:—–\-]\s*|[а-яёa-z0-9])$")
+LOWER_START_RE = re.compile(r"^([«(\"„]?)([а-яё])")
+TAIL_CONJ_RE = re.compile(r"(?:^|(?<=[\s,]))(но|и|а|или|однако|зато|ведь|что|чтобы)$", re.I)
+
+
+def repair_split_sentences(src, paras):
+    """Сделать законченными фразы, разрезанные переводчиком. Правит список на месте,
+    возвращает число исправленных пар. Заголовок (абзац 0) не трогается."""
+    fixed = 0
+    for i in range(1, min(len(src), len(paras)) - 1):
+        a, b = paras[i], paras[i + 1]
+        if not LOWER_START_RE.match(b) or src[i].rstrip()[-1:] not in SRC_END:
+            continue
+        if OPEN_END_RE.search(a):
+            a = a.rstrip(" ,;:—–-")
+            conj = TAIL_CONJ_RE.search(a)
+            if conj and conj.start(1) > 3:
+                b = conj.group(1).lower() + " " + b
+                a = a[:conj.start(1)].rstrip(" ,")
+            if a and a[-1] not in ".!?…":
+                a += "."
+        elif not re.search(r"[.!?»]$", a):
+            continue          # после многоточия продолжение со строчной — приём автора
+        m = LOWER_START_RE.match(b)
+        paras[i], paras[i + 1] = a, m.group(1) + m.group(2).upper() + b[m.end():]
+        fixed += 1
+    return fixed
 
 
 def normalize_title(text):
@@ -137,7 +176,10 @@ def finalize_one(idx):
     missing = [n for n in expected if n not in merged]
     extra = [n for n in order if n > src_count]
 
-    text = "\n\n".join(merged[n] for n in sorted(merged))
+    out = [merged[n] for n in sorted(merged)]
+    src_paras = split_paragraphs(read_text(chapter_path(idx)).strip())
+    sentences = repair_split_sentences(src_paras, out) if len(src_paras) == len(out) else 0
+    text = "\n\n".join(out)
     text, _ = normalize_title(text)
     if missing or extra:
         return "fail", "пропущены абзацы %s, лишние номера %s" % (missing[:5], extra[:5]), text
@@ -145,7 +187,7 @@ def finalize_one(idx):
         # Абзац без номера перед первым маркером, когда [1] уже занят: куда его
         # приклеить, неизвестно, а молча выбросить — потерять текст.
         return "fail", "абзацев без маркера в начале главы: %d" % unmarked, text
-    return "ok", "склеено разрывов: %d" % rejoined, text
+    return "ok", "склеено разрывов: %d, разрезанных предложений: %d" % (rejoined, sentences), text
 
 
 def main():
@@ -184,7 +226,7 @@ def main():
             print("[БРАК] гл.%04d: %s" % (idx, detail))
             continue
         ok += 1
-        if "склеено разрывов: 0" not in detail:
+        if detail != "склеено разрывов: 0, разрезанных предложений: 0":
             repaired += 1
             print("[чинка] гл.%04d: %s" % (idx, detail))
         if not args.dry_run:
