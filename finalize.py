@@ -77,8 +77,19 @@ def finalize_one(idx):
     if not os.path.exists(path):
         return "skip", "нет перевода", None
 
-    paras = split_paragraphs(read_text(path))
-    if not any(MARKER_RE.match(p) for p in paras):
+    raw = read_text(path)
+    paras = split_paragraphs(raw)
+    # Агент иногда разделяет абзацы одним переводом строки вместо пустой
+    # строки: тогда вся глава читается как один абзац [1] и бракуется как
+    # «пропущены абзацы [2, 3, 4, 5, 6]». Если маркеров в начале строк заметно
+    # больше, чем в начале абзацев, — разделяем по строкам с маркером.
+    line_marks = len(re.findall(r"(?m)^[ \t]*\[\d+\][ \t]", raw))
+    if line_marks > 3 and sum(1 for p in paras if MARKER_RE.match(p)) * 2 < line_marks:
+        raw = re.sub(r"\n(?=[ \t]*\[\d+\][ \t])", "\n\n", raw)
+        paras = split_paragraphs(raw)
+    # Служебные маркеры стоят почти на каждом абзаце; единичные «[1] …» —
+    # текст самой книги, и готовую главу с ними разбирать заново нельзя.
+    if sum(1 for p in paras if MARKER_RE.match(p)) * 2 <= len(paras):
         return "skip", "без маркеров (старый формат)", None
 
     src_count = len(split_paragraphs(read_text(chapter_path(idx)).strip()))

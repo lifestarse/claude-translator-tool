@@ -65,6 +65,33 @@ TEMPLATE = """# Задание: перевести главу {idx:04d}
 """
 
 
+def arc_title_block(idx, terms=()):
+    """Заголовок по глоссарию названий (titles_glossary.json).
+
+    Без него каждая часть арки получала своё название: «Приступ обжорства»,
+    «Инцидент с обжорством (2)», «Обжорный кризис (3)»… Арка уже названа —
+    задание получает готовую первую строку. Новая — список терминов основного
+    глоссария, которые стоят в её названии.
+    """
+    try:
+        from tools import titles_glossary as tg
+    except ImportError:
+        return ""
+    want = tg.lookup(idx)
+    if not want:
+        tg.build(quiet=True)
+        want = tg.lookup(idx)
+    if want:
+        return ("## Заголовок\n\nНазвание этой арки уже закреплено в глоссарии названий. "
+                "Первая строка перевода — ровно: `%s`\n\n" % want)
+    _key, base, _part = tg.source_title(idx)
+    hits = [t for t in terms if base and t["cn"] in base]
+    if not hits:
+        return ""
+    return ("## Заголовок\n\nНазвание главы в оригинале: «%s». Термины глоссария в нём передай "
+            "по канону: %s.\n\n" % (base, "; ".join("%s = %s" % (t["cn"], t["ru"]) for t in hits)))
+
+
 def normalise(text):
     """Collapse the site's indent markers.
 
@@ -168,7 +195,7 @@ def main():
                 idx=idx,
                 out_path="ru/chapter_%04d.txt" % idx,
                 paragraphs=paragraphs,
-                glossary_block=glossary_block(hits, pronoun_rules),
+                glossary_block=arc_title_block(idx, terms) + glossary_block(hits, pronoun_rules),
                 source=source,
             ),
         )

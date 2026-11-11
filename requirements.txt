@@ -19,3 +19,6 @@ natasha
 simplemma       # en es fr de pt it nl pl tr id uk fa hi
 kiwipiepy       # ko
 janome          # ja
+
+# build_site.py — PDF книги склеивается из частей (Chromium ищется сам, см. CHROME_PATH)
+pypdf

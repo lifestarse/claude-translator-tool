@@ -48,6 +48,7 @@ from common import (
     ROOT,
     chapter_path,
     load_json,
+    marker_count,
     read_text,
     ru_path,
     save_json,
@@ -149,7 +150,7 @@ def build_payload(idx, vol, num):
     src_paras = split_paragraphs(source)
     if len(ru_paras) != len(src_paras):
         return None, "абзацев %d против %d в оригинале" % (len(ru_paras), len(src_paras))
-    if any(p.lstrip().startswith("[") and "]" in p[:6] for p in ru_paras[:3]):
+    if marker_count(ru_paras) > marker_count(src_paras):
         return None, "остались служебные маркеры — сначала finalize.py"
     problems = validate_translation(source, read_text(ru_path(idx)))
     if problems:

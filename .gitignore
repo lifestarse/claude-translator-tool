@@ -71,3 +71,9 @@ glossary.md
 volume_map.json
 .llm.json
 morph_doubt.json
+
+# Читалка и разовые правки
+.site_cache/
+site_preview/
+titles_glossary.json
+ru_backup*/

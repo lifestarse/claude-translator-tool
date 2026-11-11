@@ -400,7 +400,7 @@ def sleep_noisily(seconds, why):
             log("    ... ещё %d мин" % round(left / 60))
 
 
-def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet"):
+def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet", effort=None):
     """Run one headless agent, waiting out throttling for as long as it takes.
 
     Rate limits retry forever by design -- the whole point of the driver is that
@@ -410,7 +410,7 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet"):
     # Кто отвечает — подписка Claude или API-ключ другого провайдера —
     # решает активный профиль llm.py; форма вывода у всех одна.
     provider = llm.provider()
-    cmd = llm.agent_cmd(prompt, agent, model, provider)
+    cmd = llm.agent_cmd(prompt, agent, model, provider, effort)
     env = llm.agent_env(provider)
     rate_waits, net_waits, hard_fails, timeouts = 0, 0, 0, 0
     while True:
@@ -639,7 +639,7 @@ def update_glossary(report_line, idx):
                 fh.write("--- после гл.%04d\n%s\n" % (idx, out[-1500:]))
 
 
-def do_prewave(lo, hi, model="sonnet"):
+def do_prewave(lo, hi, model="sonnet", effort=None):
     log("[этап] термины диапазона %d-%d до перевода" % (lo, hi))
     rc, out = run_py("prewave_terms.py", "--range", str(lo), str(hi), allow_fail=True)
     tag = "wave_%04d_%04d" % (lo, hi)
@@ -649,7 +649,7 @@ def do_prewave(lo, hi, model="sonnet"):
         return
     ok, report = run_claude(
         "Файл задания: glossary_batches/judge_%s.md" % tag,
-        agent="judge", tag="judge", model=model)
+        agent="judge", tag="judge", model=model, effort=effort)
     log("    судья: %s" % (report.replace("\n", " ")[:160] if ok else "НЕ СПРАВИЛСЯ"))
     with GlossaryLock():
         run_py("glossary_merge.py", allow_fail=True)
@@ -676,6 +676,11 @@ def main():
                     help="судить термины окнами по N глав (по умолчанию 100)")
     ap.add_argument("--model", default="sonnet",
                     help="модель для переводчика и судьи терминов (по умолчанию sonnet)")
+    ap.add_argument("--judge-model",
+                    help="модель судьи терминов (по умолчанию — как --model)")
+    ap.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"),
+                    help="уровень effort переводчика и судьи терминов "
+                         "(по умолчанию — как настроен claude CLI)")
     ap.add_argument("--fixer-model", default="opus",
                     help="модель для инженера при застрявшей главе (по умолчанию opus)")
     ap.add_argument("--status", action="store_true", help="показать состояние и выйти")
@@ -745,7 +750,8 @@ def main():
 
     log("=" * 62)
     log("Последовательный прогон: %d глав, с %d по %d" % (len(queue), queue[0], queue[-1]))
-    log("Агент: translator (%s). Лимиты пережидаются, работа не теряется." % args.model)
+    log("Агент: translator (%s%s). Лимиты пережидаются, работа не теряется."
+        % (args.model, ", effort %s" % args.effort if args.effort else ""))
     log("=" * 62)
 
     # Суд идёт окнами, а не одним куском на всю очередь. Раньше здесь стоял один
@@ -766,7 +772,7 @@ def main():
         # окно с места остановки и не пересуживает уже пройденное.
         if args.prewave and idx > judged_until:
             hi = min(idx + args.wave - 1, queue[-1])
-            do_prewave(idx, hi, args.model)
+            do_prewave(idx, hi, args.judge_model or args.model, args.effort)
             judged_until = hi
         attempts = 0
         reasons = []            # one rejection reason per failed acceptance
@@ -788,7 +794,8 @@ def main():
 
             ok, report = run_claude(
                 "Файл задания: batches/task_%04d.md" % idx,
-                agent="translator", tag="%04d" % idx, model=args.model)
+                agent="translator", tag="%04d" % idx, model=args.model,
+                effort=args.effort)
             if not ok:
                 log("    агент не справился: %s" % short(report, 200))
                 wait_for_internet()
@@ -834,6 +841,9 @@ def main():
             update_glossary(report, idx)
             state["done"].append(idx)
             save_state(state)
+            # Публичная читалка подхватывает главу сразу; сбой сборки перевод не останавливает.
+            if os.path.exists(os.path.join(ROOT, "build_site.py")):
+                run_py("build_site.py", allow_fail=True)
             ok_count += 1
             elapsed = (time.time() - started) / 60
             log("    готово | %s | всего %d, %.0f мин, ~%.1f мин/глава"

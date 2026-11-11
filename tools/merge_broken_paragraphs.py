@@ -35,6 +35,7 @@ from lang import LANG  # noqa: E402
 from common import (  # noqa: E402
     RU_DIR,
     chapter_path,
+    marker_count,
     read_text,
     ru_path,
     split_paragraphs,
@@ -54,8 +55,6 @@ CN_OPEN = set(LANG.open)
 SRC_JOIN = "" if LANG.code in ("zh", "ja", "th") else " "
 RU_END = set(".!?…»”\")]:;—–-")
 LOWER_START_RE = re.compile(r"^[«\"„“(]?[a-zа-яё]")
-# Служебные маркеры [N] — глава ещё не финализирована, трогать её рано.
-MARKER_RE = re.compile(r"^\s*\[\d+\]\s")
 
 
 def _is_break(cn_a, cn_b, ru_a, ru_b):
@@ -93,7 +92,8 @@ def fix_chapter(idx, apply=False):
         return 0, "нет оригинала или перевода"
     source, translated = read_text(src_file), read_text(ru_file)
     cn_paras, ru_paras = split_paragraphs(source), split_paragraphs(translated)
-    if any(MARKER_RE.match(p) for p in ru_paras):
+    # Служебные маркеры [N] — глава ещё не финализирована, трогать её рано.
+    if marker_count(ru_paras) > marker_count(cn_paras):
         return 0, "не финализирована"
     breaks = find_breaks(cn_paras, ru_paras)
     if not breaks:

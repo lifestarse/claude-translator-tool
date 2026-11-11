@@ -84,6 +84,11 @@ def split_paragraphs(text):
     return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
 
+def marker_count(paras):
+    """Сколько абзацев открывается скобочным номером «[N] »."""
+    return sum(1 for p in paras if PARA_MARKER_RE.match(p))
+
+
 # --------------------------------------------------------------------------
 # Site watermark removal
 # --------------------------------------------------------------------------
@@ -554,8 +559,10 @@ def validate_translation(source, translated):
     # into the book. A chapter killed between the agent's Write and the finalize
     # step keeps them, and every other check passes it happily: the counts match
     # and the text is Russian. Chapter 83 was accepted that way.
-    left_markers = sum(1 for p in ru_p if PARA_MARKER_RE.match(p))
-    if left_markers:
+    # Оригинал и сам открывает абзацы скобочным номером («[1] 아이템명 : …»);
+    # служебные — только те, что сверх этого.
+    left_markers = marker_count(ru_p) - marker_count(src_p)
+    if left_markers > 0:
         problems.append(
             "остались служебные маркеры абзацев [N]: %d — глава не финализирована"
             % left_markers

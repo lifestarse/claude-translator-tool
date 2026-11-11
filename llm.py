@@ -200,7 +200,7 @@ def find_claude():
         "Профили OpenAI-совместимых провайдеров работают без него: python llm.py list")
 
 
-def agent_cmd(prompt, agent=None, model="sonnet", p=None):
+def agent_cmd(prompt, agent=None, model="sonnet", p=None, effort=None):
     """Команда запуска одного агента — та же форма вывода при любом провайдере:
     JSON-конверт с полями result, is_error, usage, total_cost_usd."""
     p = p or provider()
@@ -216,8 +216,36 @@ def agent_cmd(prompt, agent=None, model="sonnet", p=None):
     cmd = head + ["-p", prompt]
     if agent:
         cmd += ["--agent", agent]
-    return cmd + ["--model", model, "--permission-mode", "bypassPermissions",
-                  "--output-format", "json"]
+    # Уровень effort понимает только claude CLI.
+    if effort and p["kind"] == "cli":
+        cmd += ["--effort", effort]
+    # Под root claude отказывается от bypassPermissions. Тогда агенту заранее
+    # разрешаются ровно инструменты из его описания (tools: в .claude/agents),
+    # а всё прочее без человека отклоняется автоматически.
+    if p["kind"] == "cli" and hasattr(os, "geteuid") and os.geteuid() == 0:
+        mode = ["--permission-mode", "acceptEdits", "--permission-prompts", "none"]
+        tools = agent_tools(agent)
+        if tools:
+            mode += ["--allowedTools", ",".join(tools)]
+    else:
+        mode = ["--permission-mode", "bypassPermissions"]
+    return cmd + ["--model", model] + mode + ["--output-format", "json"]
+
+
+def agent_tools(agent):
+    """Инструменты агента из строки `tools:` его описания; [] — не задано."""
+    if not agent:
+        return []
+    path = os.path.join(ROOT, ".claude", "agents", agent + ".md")
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read().split("\n---", 1)[0]
+    except OSError:
+        return []
+    for line in head.splitlines():
+        if line.startswith("tools:"):
+            return [t.strip() for t in line[len("tools:"):].split(",") if t.strip()]
+    return []
 
 
 def agent_env(p=None):
