@@ -209,16 +209,24 @@ body.rd .top{background:color-mix(in srgb,var(--paper) 90%,transparent);border-c
 .drawer .lst .no{color:var(--muted);width:30px;text-align:right;flex:none}
 .shade{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:35;display:none}.shade.on{display:block}
 .prog{position:fixed;left:0;top:0;height:3px;background:var(--accent);z-index:50;width:0}
+/* --- тёмная тема страницы книги (общая с читалкой) --- */
+body.t-dark{--bg:#121214;--card:#1c1c1f;--ink:#e8e8ea;--ink-2:#b4b4ba;--muted:#86868e;--line:#2d2d33}
+body.t-dark:not(.rd) .top{background:rgba(24,24,27,.92);border-color:#2d2d33}
+body.t-dark .tags span{background:#3b2219;color:#ff9e70}
+body.t-dark .btn.sec{background:#232327;color:var(--ink);border-color:#38383f}
+body.t-dark .hero,body.t-dark .sec-card{box-shadow:none}
+.top .theme{margin-left:auto;font-size:20px;color:var(--ink)}
+.theme .sun,body.t-dark .theme .moon{display:none}body.t-dark .theme .sun{display:inline}
 """
 
 READER_JS = r"""
 (function(){
 var K='hunter-reader',S=JSON.parse(localStorage.getItem(K)||'{}'),b=document.body,r=document.documentElement;
 var FONTS={serif:'Georgia,"PT Serif","Times New Roman",serif',sans:'-apple-system,"Segoe UI",Roboto,Arial,sans-serif',mono:'"Literata","Iowan Old Style",Georgia,serif'};
-function apply(){b.classList.remove('t-cream','t-green','t-dark');if(S.t&&S.t!=='white')b.classList.add('t-'+S.t);
+function apply(){var t=S.t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'white');b.classList.remove('t-cream','t-green','t-dark');if(t!=='white')b.classList.add('t-'+t);
  r.style.setProperty('--fs',(S.fs||19)+'px');r.style.setProperty('--ff',FONTS[S.ff||'serif']);r.style.setProperty('--w',(S.w||720)+'px');
  r.style.setProperty('--lh',S.lh||1.85);
- document.querySelectorAll('[data-t]').forEach(function(e){e.classList.toggle('on',(S.t||'white')===e.dataset.t)});
+ document.querySelectorAll('[data-t]').forEach(function(e){e.classList.toggle('on',t===e.dataset.t)});
  document.querySelectorAll('[data-ff]').forEach(function(e){e.classList.toggle('on',(S.ff||'serif')===e.dataset.ff)});
  document.querySelectorAll('[data-w]').forEach(function(e){e.classList.toggle('on',String(S.w||720)===e.dataset.w)});
  var f=document.getElementById('fsv');if(f)f.textContent=S.fs||19;}
@@ -239,7 +247,14 @@ var p=document.getElementById('prog');if(p)addEventListener('scroll',function(){
 })();
 """
 
+# Тема включается до отрисовки страницы — без белой вспышки; выбор общий с читалкой,
+# без выбора — тема устройства.
+THEME_INIT_JS = ("(function(){try{var S=JSON.parse(localStorage.getItem('hunter-reader')||'{}'),"
+                 "t=S.t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'');"
+                 "if(t&&t!=='white')document.body.classList.add('t-'+t)}catch(e){}})();")
+
 INDEX_JS = r"""
+window.T=function(){var K='hunter-reader',S=JSON.parse(localStorage.getItem(K)||'{}'),d=document.body.classList.toggle('t-dark');S.t=d?'dark':'white';localStorage.setItem(K,JSON.stringify(S));};
 (function(){var l=localStorage.getItem('hunter-last'),c=document.getElementById('cont');
 if(l&&c){c.href='ch/'+l+'.html';c.style.display='';c.querySelector('span').textContent='Продолжить · гл. '+l;}
 var s=document.getElementById('sort'),t=document.getElementById('toc');
@@ -279,7 +294,7 @@ def chapter_page(ch, chapters, idx):
               "" if next_n else " off", "%d.html" % next_n if next_n else "#"))
     t = "Глава %d. %s" % (n, name)
     return (head("%s — %s" % (t, TITLE), "%s. Читать онлайн на русском." % t) +
-            '<body class="rd" data-ch="%d"><div class="prog" id="prog"></div>' % n +
+            '<body class="rd" data-ch="%d"><script>%s</script><div class="prog" id="prog"></div>' % (n, THEME_INIT_JS.replace("hunter-", SLUG + "-")) +
             '<header class="top rtop"><div class="in">'
             '<button class="ib" onclick="R.toc(true)" title="Оглавление">☰</button>'
             '<a class="ib" href="%s/" title="К книге">⌂</a>' % BASE +
@@ -319,7 +334,7 @@ def index_page(chapters, files):
     stamp = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
     first = '<a class="btn main" href="ch/1.html">📖 Читать</a>' if chapters else ""
     return (head(TITLE + " — читать онлайн", " ".join(re.sub("<[^>]+>", " ", s) for s in SYNOPSIS)[:300]) +
-            '<body><header class="top"><div class="in"><a class="logo" href="/"><i>⚡</i>%s</a></div></header>' % esc(SITE_NAME) +
+            '<body><script>%s</script><header class="top"><div class="in"><a class="logo" href="/"><i>⚡</i>%s</a><button class="ib theme" onclick="T()" title="Тёмная / светлая тема"><span class="moon">☾</span><span class="sun">☀</span></button></div></header>' % (THEME_INIT_JS.replace("hunter-", SLUG + "-"), esc(SITE_NAME)) +
             ''
             '<div class="wrap"><section class="hero"><div class="cover"><img src="cover.jpg" alt="Обложка"></div>'
             '<div class="info"><h1>%s</h1><div class="orig">%s · %s</div>' % (esc(TITLE), esc(ORIG), esc(EN)) +
