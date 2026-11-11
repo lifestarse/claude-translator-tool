@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""Склейка абзацев, разрезанных источником посреди фразы.
+"""Склейка абзацев, между которыми разрезана одна фраза.
 
-Сайт-источник иногда рвёт один абзац на два посреди предложения. Переводчик
-честно держит 1:1 и переносит разрыв в перевод — читатель видит фразу,
-оборванную на полуслове, а следующий абзац начинается со строчной буквы.
+Читатель видит фразу, оборванную на полуслове, а следующий абзац начинается со
+строчной буквы. Бывает двух видов:
+
+  * разрезал источник: сайт рвёт абзац посреди предложения, переводчик честно
+    держит 1:1 и переносит разрыв в перевод;
+  * разрезал переводчик: автор ставит придаточное отдельным абзацем («…할 무렵.»
+    — «когда…»), переводчик пристёгивает его запятой к следующему. Так было в
+    308 местах 109 глав из 262. Деление на отдельные фразы («Пока репортёры
+    снимали.» / «Образ героя изменился.») читатели отвергли — висящее
+    придаточное читается как обрывок, — поэтому фраза склеивается целиком.
 
 Склейка делается СИНХРОННО в оригинале (`chapters/`) и переводе (`ru/`): иначе
-сломается соответствие абзацев 1:1, на котором держится вся приёмка.
-Разрыв признаётся только при согласии обеих сторон:
+сломается соответствие абзацев 1:1, на котором держится вся приёмка. Русский
+абзац склеивается со следующим, если тот начинается со строчной, а сам абзац
+  * не закончен (запятая, двоеточие, тире или вовсе без знака) — фраза оборвана;
+  * закончен репликой или звуком («— Угх!», «Звяк.»), а дальше идёт продолжение
+    («и нас окутал дым») — реплика со словами автора соединяется через «, —».
+Если оригинал свой абзац закончил, русский следующий должен начинаться со
+строчной кириллицы (латинское «iPhone» в начале абзаца — не продолжение).
 
-  * абзац оригинала кончается не знаком конца фразы, а следующий не открывает
-    реплику;
-  * русский абзац кончается не знаком конца фразы, а следующий начинается со
-    строчной буквы.
-
-Заголовок (абзац 0) не трогается никогда. После склейки глава проходит
-`validate_translation`; если до правки глава приёмку проходила, а после — нет,
-правка не записывается.
+autorun.py зовёт склейку сразу после приёмки каждой главы. Заголовок (абзац 0)
+не трогается никогда. После склейки глава проходит `validate_translation`;
+если до правки глава приёмку проходила, а после — нет, правка не записывается.
 
     python tools/merge_broken_paragraphs.py                 пробный прогон
     python tools/merge_broken_paragraphs.py --apply         записать
@@ -53,18 +60,47 @@ CN_END = set(LANG.end) if LANG.end is not None else None
 CN_OPEN = set(LANG.open)
 # Чем склеивать половины в оригинале: в письменностях без пробелов — ничем.
 SRC_JOIN = "" if LANG.code in ("zh", "ja", "th") else " "
-RU_END = set(".!?…»”\")]:;—–-")
 LOWER_START_RE = re.compile(r"^[«\"„“(]?[a-zа-яё]")
+CYR_LOWER_START_RE = re.compile(r"^([«\"„“(]?)([а-яё])")
+OPEN_END_RE = re.compile(r"(?:[,;:—–\-]|[^\W_])$")
+FINISHED_RE = re.compile(r"[.!?»]$")
 
 
 def _is_break(cn_a, cn_b, ru_a, ru_b):
     if not (cn_a and cn_b and ru_a and ru_b):
         return False
-    if CN_END is not None and (cn_a[-1] in CN_END or cn_b[0] in CN_OPEN):
+    source_cut = CN_END is not None and cn_a[-1] not in CN_END and cn_b[0] not in CN_OPEN
+    if ru_a.endswith(",") and re.match(r"[А-ЯЁA-Z]", ru_b):
+        return True               # продолжение с имени: «…звук,» / «Ан Юнсын добрался…»
+    if not (LOWER_START_RE if source_cut else CYR_LOWER_START_RE).match(ru_b):
         return False
-    if ru_a[-1] in RU_END:
-        return False
-    return bool(LOWER_START_RE.match(ru_b))
+    if OPEN_END_RE.search(ru_a):
+        return True
+    return bool(FINISHED_RE.search(ru_a)) and not ru_a.endswith("...")
+
+
+def join_ru(a, b):
+    """Склеить русскую фразу из двух абзацев. Реплика или мысль + слова автора — через «, —»."""
+    if a.startswith("«") and re.search(r"»\.?$", a):
+        return a.rstrip(".") + ", — " + b
+    if a.startswith(("—", "–")):
+        if a.endswith("."):
+            a = a[:-1] + ","
+        elif re.search(r"[^\W_]$", a):
+            a += ","
+        return a + " — " + b
+    if FINISHED_RE.search(a):
+        m = CYR_LOWER_START_RE.match(b)
+        if m:
+            b = m.group(1) + m.group(2).upper() + b[m.end():]
+    return a + " " + b
+
+
+def comma_before_speech(ru_paras):
+    """Номера абзацев (с 1), которые кончаются запятой перед репликой, мыслью или
+    сообщением. Склеить их нельзя — нужна правка руками или агентом."""
+    return [i + 1 for i in range(1, len(ru_paras) - 1)
+            if ru_paras[i].endswith(",") and ru_paras[i + 1].startswith(("—", "–", "«", "[", "("))]
 
 
 def find_breaks(cn_paras, ru_paras):
@@ -76,10 +112,12 @@ def find_breaks(cn_paras, ru_paras):
 
 
 def _merge(paras, breaks, sep):
+    """sep — строка-разделитель (оригинал) или функция склейки (перевод)."""
+    join = sep if callable(sep) else (lambda a, b: a + sep + b)
     out, skip = [], set(i + 1 for i in breaks)
     for i, p in enumerate(paras):
         if i in skip:
-            out[-1] = out[-1] + sep + p
+            out[-1] = join(out[-1], p)
         else:
             out.append(p)
     return out
@@ -100,7 +138,7 @@ def fix_chapter(idx, apply=False):
         return 0, ""
 
     new_source = "\n\n".join(_merge(cn_paras, breaks, SRC_JOIN)) + "\n"
-    new_ru = "\n\n".join(_merge(ru_paras, breaks, " ")) + "\n"
+    new_ru = "\n\n".join(_merge(ru_paras, breaks, join_ru)) + "\n"
     was_ok = not validate_translation(source, translated)
     problems = validate_translation(new_source, new_ru)
     if was_ok and problems:
@@ -134,6 +172,7 @@ def main():
 
     lo, hi = args.range if args.range else (None, None)
     total = touched = 0
+    manual = []
     for idx in chapter_indices(lo, hi):
         n, detail = fix_chapter(idx, apply=args.apply)
         if n:
@@ -142,8 +181,12 @@ def main():
             print("гл.%04d: склеено %d (%s)" % (idx, n, detail))
         elif detail.startswith("склейка ломает"):
             print("гл.%04d: пропущено — %s" % (idx, detail))
+        manual += [(idx, i) for i in comma_before_speech(split_paragraphs(read_text(ru_path(idx))))]
     print("Итого: %d склеек в %d главах%s"
           % (total, touched, "" if args.apply else " (пробный прогон, ничего не записано)"))
+    if manual:
+        print("Запятая перед репликой/кавычками — поправь руками или агентом (%d): %s"
+              % (len(manual), ", ".join("гл.%d ¶%d" % m for m in manual[:20])))
 
 
 if __name__ == "__main__":

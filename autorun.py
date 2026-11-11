@@ -44,6 +44,7 @@ import time
 
 import finalize
 import llm
+from tools import merge_broken_paragraphs as merger
 from common import (
     RU_DIR,
     ROOT,
@@ -838,6 +839,12 @@ def main():
                 sleep_noisily(min(15 * attempts, 120), "перевод не прошёл приёмку")
                 continue
 
+            # Фраза, разрезанная между абзацами (запятая в конце, следующий со
+            # строчной или с имени), склеивается сразу в обеих сторонах — до того,
+            # как глава уйдёт в глоссарий, на сайт и к читателю.
+            merged, _ = merger.fix_chapter(idx, apply=True)
+            if merged:
+                log("    склеено разрезанных фраз: %d" % merged)
             update_glossary(report, idx)
             state["done"].append(idx)
             save_state(state)
