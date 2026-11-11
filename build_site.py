@@ -80,6 +80,9 @@ EN = book_field("Английское")
 AUTHOR = book_field("Автор")
 TOTAL = int(re.sub(r"\D", "", book_field("Всего глав в оригинале", "0")) or 0)
 COVER = os.path.join(ROOT, "cover.jpg")
+# Шрифты читалки: woff2 (латиница + кириллица, начертание 400) и fonts.css с
+# @font-face, пути в нём относительно style.css. Браузер качает только выбранный.
+FONTS_DIR = os.path.join(ROOT, "fonts")
 CHROME = find_chrome()
 TAGS = [t.strip() for t in book_field("Теги").split(",") if t.strip()]
 SYNOPSIS = book_synopsis()
@@ -111,7 +114,7 @@ def fingerprint(chapters):
     h = hashlib.sha1()
     for n, name, paras in chapters:
         h.update(("%d\n%s\n%s\n" % (n, name, "\n".join(paras))).encode("utf-8"))
-    for path in (COVER, os.path.abspath(__file__)):
+    for path in (COVER, os.path.abspath(__file__), os.path.join(FONTS_DIR, "fonts.css")):
         if os.path.exists(path):
             h.update(open(path, "rb").read())
     return h.hexdigest()
@@ -130,11 +133,42 @@ def write(path, data):
 # Оформление
 # --------------------------------------------------------------------------
 
+# Шрифты для чтения: ключ, подпись в панели «Aa», CSS-стек. Первый — по умолчанию.
+# «Системный» ничего не качает: засечки устройства.
+# Шрифт интерфейса остаётся системным: system-ui стоит в его стеке раньше Roboto,
+# иначе @font-face «Roboto» отсюда перекрыл бы системный и Android качал бы его зря.
+READ_FONTS = [
+    ("literata", "Literata", "Literata,Georgia,serif"),
+    ("ptserif", "PT Serif", "'PT Serif',Georgia,serif"),
+    ("lora", "Lora", "Lora,Georgia,serif"),
+    ("merri", "Merriweather", "Merriweather,Georgia,serif"),
+    ("roboto", "Roboto", "Roboto,Arial,sans-serif"),
+    ("opensans", "Open Sans", "'Open Sans',Arial,sans-serif"),
+    ("ptsans", "PT Sans", "'PT Sans',Arial,sans-serif"),
+    ("nunito", "Nunito Sans", "'Nunito Sans',Arial,sans-serif"),
+    ("sys", "Системный", "Georgia,'Times New Roman',serif"),
+]
+
+
+def font_css():
+    """@font-face из fonts/fonts.css и классы body.f-<ключ> для выбора шрифта."""
+    path = os.path.join(FONTS_DIR, "fonts.css")
+    faces = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    return faces + "".join("body.f-%s{--ff:%s}\n" % (k, stack) for k, _, stack in READ_FONTS)
+
+
+def font_buttons():
+    """Кнопки выбора шрифта; каждая подписана своим шрифтом."""
+    return "".join('<button data-ff="%s" style="font-family:%s" onclick="R.ff(\'%s\')"%s>%s</button>'
+                   % (k, stack, k, ' class="wide"' if k == "sys" else "", esc(label))
+                   for k, label, stack in READ_FONTS)
+
+
 CSS = r"""
 :root{--accent:#ff5e2c;--accent-2:#ff8a3d;--ink:#1d1d1f;--ink-2:#55555c;--muted:#8e8e96;
   --bg:#f5f5f7;--card:#fff;--line:#e8e8ed;--r:14px}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,"Segoe UI",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif}
 a{color:inherit;text-decoration:none}
 .top{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid var(--line)}
 .top .in{max-width:1080px;margin:auto;display:flex;align-items:center;gap:14px;height:56px;padding:0 18px}
@@ -188,20 +222,24 @@ body.rd .top{background:color-mix(in srgb,var(--paper) 90%,transparent);border-c
 .page{max-width:var(--w,720px);margin:0 auto;padding:30px 22px 40px}
 .page h1{font-size:1.45em;line-height:1.3;margin:10px 0 6px;font-family:var(--hf,inherit)}
 .page .meta{color:var(--sub);font-size:13px;margin-bottom:30px}
-.txt{font-size:var(--fs,19px);line-height:var(--lh,1.85);font-family:var(--ff,Georgia,"PT Serif","Times New Roman",serif)}
+.txt{font-size:var(--fs,19px);line-height:var(--lh,1.85);font-family:var(--ff,Literata,Georgia,serif)}
 .txt p{margin:0 0 1em;text-indent:0}
 .txt p.sb{text-align:center;color:var(--sub);letter-spacing:.4em;margin:1.6em 0}
 .nav{max-width:var(--w,720px);margin:0 auto;padding:10px 22px 70px;display:flex;gap:12px}
 .nav a{flex:1;text-align:center;border:1.5px solid var(--rline);border-radius:24px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--text)}
 .nav a.next{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0}
 .nav a.off{opacity:.35;pointer-events:none}
-.panel{position:fixed;right:16px;top:64px;z-index:30;width:300px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 14px 40px rgba(0,0,0,.18);display:none;font-size:14px}
+.panel{position:fixed;right:16px;top:64px;z-index:30;width:300px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 14px 40px rgba(0,0,0,.18);display:none;font-size:14px;max-height:calc(100vh - 80px);max-height:calc(100dvh - 80px);overflow-y:auto}
 .panel.on{display:block}.panel .row{margin-bottom:14px}.panel .lab{color:var(--muted);font-size:12px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px}
 .sw{display:flex;gap:10px}.sw button{width:38px;height:38px;border-radius:50%;cursor:pointer;border:2px solid transparent}
 .sw button.on{border-color:var(--accent)}
 .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg button{flex:1;height:36px;border:0;background:transparent;cursor:pointer;font:inherit;color:inherit}
 .seg button.on{background:var(--accent);color:#fff}
+.fonts{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.fonts button{height:40px;padding:0 6px;border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;cursor:pointer;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fonts button.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);color:var(--accent)}
+.fonts .wide{grid-column:1/-1}
 .drawer{position:fixed;left:0;top:0;bottom:0;z-index:40;width:min(360px,88vw);background:#fff;transform:translateX(-102%);transition:transform .25s,visibility .25s;visibility:hidden;display:flex;flex-direction:column}
 .drawer.on{transform:none;visibility:visible;box-shadow:0 0 40px rgba(0,0,0,.25)}.drawer h3{margin:0;padding:18px 20px;border-bottom:1px solid var(--rline,var(--line));font-size:16px}
 .drawer .lst{overflow:auto;flex:1}.drawer .lst a{display:flex;gap:10px;padding:11px 20px;border-bottom:1px solid var(--rline,var(--line));font-size:14px}
@@ -222,12 +260,14 @@ body.t-dark .hero,body.t-dark .sec-card{box-shadow:none}
 READER_JS = r"""
 (function(){
 var K='hunter-reader',S=JSON.parse(localStorage.getItem(K)||'{}'),b=document.body,r=document.documentElement;
-var FONTS={serif:'Georgia,"PT Serif","Times New Roman",serif',sans:'-apple-system,"Segoe UI",Roboto,Arial,sans-serif',mono:'"Literata","Iowan Old Style",Georgia,serif'};
+var FONTS=__FONT_KEYS__,OLDF={serif:'literata',sans:'roboto'};
+function fk(){var k=OLDF[S.ff]||S.ff;return FONTS.indexOf(k)>=0?k:FONTS[0]}
 function apply(){var t=S.t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'white');b.classList.remove('t-cream','t-green','t-dark');if(t!=='white')b.classList.add('t-'+t);
- r.style.setProperty('--fs',(S.fs||19)+'px');r.style.setProperty('--ff',FONTS[S.ff||'serif']);r.style.setProperty('--w',(S.w||720)+'px');
+ r.style.setProperty('--fs',(S.fs||19)+'px');r.style.setProperty('--w',(S.w||720)+'px');
+ var cf=fk();FONTS.forEach(function(k){b.classList.toggle('f-'+k,k===cf)});
  r.style.setProperty('--lh',S.lh||1.85);
  document.querySelectorAll('[data-t]').forEach(function(e){e.classList.toggle('on',t===e.dataset.t)});
- document.querySelectorAll('[data-ff]').forEach(function(e){e.classList.toggle('on',(S.ff||'serif')===e.dataset.ff)});
+ document.querySelectorAll('[data-ff]').forEach(function(e){e.classList.toggle('on',cf===e.dataset.ff)});
  document.querySelectorAll('[data-w]').forEach(function(e){e.classList.toggle('on',String(S.w||720)===e.dataset.w)});
  var f=document.getElementById('fsv');if(f)f.textContent=S.fs||19;}
 function save(){localStorage.setItem(K,JSON.stringify(S));apply();}
@@ -247,11 +287,14 @@ var p=document.getElementById('prog');if(p)addEventListener('scroll',function(){
 })();
 """
 
+READER_JS = READER_JS.replace("__FONT_KEYS__", json.dumps([k for k, _, _ in READ_FONTS]))
+
 # Тема включается до отрисовки страницы — без белой вспышки; выбор общий с читалкой,
 # без выбора — тема устройства.
-THEME_INIT_JS = ("(function(){try{var S=JSON.parse(localStorage.getItem('hunter-reader')||'{}'),"
-                 "t=S.t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'');"
-                 "if(t&&t!=='white')document.body.classList.add('t-'+t)}catch(e){}})();")
+THEME_INIT_JS = ("(function(){try{var S=JSON.parse(localStorage.getItem('hunter-reader')||'{}'),b=document.body,"
+                 "t=S.t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':''),"
+                 "f={serif:'literata',sans:'roboto'}[S.ff]||S.ff;"
+                 "if(t&&t!=='white')b.classList.add('t-'+t);if(f)b.classList.add('f-'+f)}catch(e){}})();")
 
 INDEX_JS = r"""
 window.T=function(){var K='hunter-reader',S=JSON.parse(localStorage.getItem(K)||'{}'),d=document.body.classList.toggle('t-dark');S.t=d?'dark':'white';localStorage.setItem(K,JSON.stringify(S));};
@@ -306,9 +349,9 @@ def chapter_page(ch, chapters, idx):
             '<button onclick="R.fs(-1)">A−</button><button onclick="R.fs(1)">A+</button></div></div>'
             '<div class="row"><div class="lab">Межстрочный</div><div class="seg">'
             '<button onclick="R.lh(-.1)">−</button><button onclick="R.lh(.1)">+</button></div></div>'
-            '<div class="row"><div class="lab">Шрифт</div><div class="seg">'
-            '<button data-ff="serif" onclick="R.ff(\'serif\')">С засечками</button>'
-            '<button data-ff="sans" onclick="R.ff(\'sans\')">Без засечек</button></div></div>'
+            '<div class="row"><div class="lab">Шрифт</div><div class="fonts">' +
+            font_buttons() +
+            '</div></div>'
             '<div class="row" style="margin:0"><div class="lab">Ширина</div><div class="seg">'
             '<button data-w="600" onclick="R.w(600)">Узко</button><button data-w="720" onclick="R.w(720)">Средне</button>'
             '<button data-w="900" onclick="R.w(900)">Широко</button></div></div></div>'
@@ -529,7 +572,12 @@ def main():
     VERSION = fp[:8]
     last = chapters[-1][0]
 
-    write(os.path.join(SITE, "style.css"), CSS)
+    write(os.path.join(SITE, "style.css"), font_css() + CSS)
+    if os.path.isdir(FONTS_DIR):
+        for fn in sorted(os.listdir(FONTS_DIR)):
+            if fn.endswith(".woff2") or fn == "LICENSES.txt":
+                with open(os.path.join(FONTS_DIR, fn), "rb") as f:
+                    write(os.path.join(SITE, "fonts", fn), f.read())
     write(os.path.join(SITE, "reader.js"), READER_JS.replace("hunter-", SLUG + "-"))
     if os.path.exists(COVER):
         shutil.copyfile(COVER, os.path.join(SITE, "cover.jpg"))

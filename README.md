@@ -34,7 +34,7 @@
 | 7 | Смысловая приёмка (выборочно) | `build_qc.py` → агент proofreader → `build_qcfix.py` → агент qcfix |
 | 8 | Финальная сквозная проверка | `python final_check.py` — полнота, структура, спам, канон, глоссарные зонды, нумерация, дубликаты. Ноль провалов и ноль предупреждений = корпус готов |
 | 9 | Выкладка | `publish_ranobelib.py --publish [--range LO HI]`; синк правок: `--sync --publish`; капельная выкладка: `passive-update.py --every N` |
-| 9а | Публичная читалка | `python build_site.py` — сайт: страница книги, главы (темы, шрифт, ширина, оглавление, прогресс, «продолжить»), файлы EPUB/FB2/TXT/HTML/PDF. Настройки — раздел «Публичная читалка» в `BOOK.md`, обложка — `cover.jpg`. `autorun.py` пересобирает после каждой принятой главы |
+| 9а | Публичная читалка | `python build_site.py` — сайт: страница книги, главы (темы, шрифт, ширина, оглавление, прогресс, «продолжить»), файлы EPUB/FB2/TXT/HTML/PDF. Настройки — раздел «Публичная читалка» в `BOOK.md`, обложка — `cover.jpg`. Шрифты для чтения лежат в `fonts/` и раздаются с самого сайта: Literata (по умолчанию), PT Serif, Lora, Merriweather, Roboto, Open Sans, PT Sans, Nunito Sans плюс «Системный». Это woff2 с латиницей и кириллицей и `fonts.css` с `@font-face`. Браузер качает только выбранный шрифт. Лицензии OFL/Apache — `fonts/LICENSES.txt`. `autorun.py` пересобирает после каждой принятой главы |
 | 10 | Карта мира (опционально) | скелет co-occurrence + агенты glossmap → ревизия glossmapcheck → `build_reader_map.py` → страница с поиском и связями |
 | 11 | EPUB (опционально) | `python build_epub.py` |
 
