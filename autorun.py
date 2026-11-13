@@ -43,6 +43,7 @@ import sys
 import time
 
 import finalize
+import glossary_audit
 import llm
 from tools import merge_broken_paragraphs as merger
 from common import (
@@ -656,6 +657,34 @@ def do_prewave(lo, hi, model="sonnet", effort=None):
         run_py("glossary_merge.py", allow_fail=True)
 
 
+def audit_glossary(model, effort, lo, hi):
+    """Судья проверяет термины, которые переводчики добавили сами (glossary_audit.py).
+
+    Имя из отчёта переводчика сразу становится каноном для следующих глав. Без
+    проверки так на «Охотнике из другого мира» за 324 главы набралось 526
+    терминов: одни и те же сущности получили разные имена, персонаж сменил пол.
+    Аудит каждые --audit-every глав ловит это, пока имя не разошлось по книге.
+    """
+    if glossary_audit.pending_verdicts():
+        # Прошлый аудит оборвался между судом и применением — сначала применить.
+        with GlossaryLock():
+            glossary_audit.apply()
+    n = glossary_audit.build()
+    if not n:
+        log("    аудит глоссария: новых терминов нет")
+        return
+    log("[этап] аудит глоссария после гл.%04d: %d терминов, судья %s" % (hi, n, model))
+    for nn, ok, report in glossary_audit.run(
+            lambda prompt, agent, tag: run_claude(prompt, agent, tag=tag, model=model, effort=effort)):
+        log("    пакет %s: %s" % (nn, report if ok else "НЕ СПРАВИЛСЯ — " + report))
+    with GlossaryLock():
+        summary = glossary_audit.apply()
+    log("    аудит: " + glossary_audit.describe(summary))
+    hint = glossary_audit.align_hint(summary, hi)
+    if hint:
+        log("    имена поменялись, а главы с ними уже переведены — выровнять: " + hint)
+
+
 def main():
     global CLAUDE
     ap = argparse.ArgumentParser(description="Последовательный автономный перевод")
@@ -679,6 +708,9 @@ def main():
                     help="модель для переводчика и судьи терминов (по умолчанию sonnet)")
     ap.add_argument("--judge-model",
                     help="модель судьи терминов (по умолчанию — как --model)")
+    ap.add_argument("--audit-every", type=int, default=25, metavar="N",
+                    help="каждые N принятых глав судья (--judge-model) проверяет термины, "
+                         "которые переводчики добавили сами; 0 — выключить (по умолчанию 25)")
     ap.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"),
                     help="уровень effort переводчика и судьи терминов "
                          "(по умолчанию — как настроен claude CLI)")
@@ -764,6 +796,7 @@ def main():
 
     started = time.time()
     ok_count = 0
+    since_audit, audit_from, last_ok = 0, None, None
     for n, idx in enumerate(queue, 1):
         if os.path.exists(ru_path(idx)):
             continue                      # finished by an earlier run
@@ -856,8 +889,15 @@ def main():
             log("    готово | %s | всего %d, %.0f мин, ~%.1f мин/глава"
                 % (short(report), ok_count, elapsed,
                    elapsed / max(ok_count, 1)))
+            since_audit, last_ok = since_audit + 1, idx
+            audit_from = audit_from or idx
+            if args.audit_every and since_audit >= args.audit_every:
+                audit_glossary(args.judge_model or args.model, args.effort, audit_from, idx)
+                since_audit, audit_from = 0, None
             break
 
+    if args.audit_every and since_audit:
+        audit_glossary(args.judge_model or args.model, args.effort, audit_from, last_ok)
     log("=" * 62)
     log("Прогон закончен: переведено %d из %d за %.0f мин"
         % (ok_count, len(queue), (time.time() - started) / 60))
