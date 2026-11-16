@@ -30,6 +30,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from common import CHAPTERS_DIR, ROOT, chapter_path, read_text, ru_path, split_paragraphs, validate_translation
+from chatlines import chat_lines
 from lang import LANG
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -114,7 +115,8 @@ def fingerprint(chapters):
     h = hashlib.sha1()
     for n, name, paras in chapters:
         h.update(("%d\n%s\n%s\n" % (n, name, "\n".join(paras))).encode("utf-8"))
-    for path in (COVER, os.path.abspath(__file__), os.path.join(FONTS_DIR, "fonts.css")):
+    for path in (COVER, os.path.abspath(__file__), os.path.join(FONTS_DIR, "fonts.css"),
+                 os.path.join(ROOT, "chatlines.py")):
         if os.path.exists(path):
             h.update(open(path, "rb").read())
     return h.hexdigest()
@@ -225,6 +227,7 @@ body.rd .top{background:color-mix(in srgb,var(--paper) 90%,transparent);border-c
 .txt{font-size:var(--fs,19px);line-height:var(--lh,1.85);font-family:var(--ff,Literata,Georgia,serif)}
 .txt p{margin:0 0 1em;text-indent:0}
 .txt p.sb{text-align:center;color:var(--sub);letter-spacing:.4em;margin:1.6em 0}
+.txt p.chat .ln{display:block;margin:.2em 0}.txt p.chat .re{padding-left:1.4em}
 .nav{max-width:var(--w,720px);margin:0 auto;padding:10px 22px 70px;display:flex;gap:12px}
 .nav a{flex:1;text-align:center;border:1.5px solid var(--rline);border-radius:24px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--text)}
 .nav a.next{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0}
@@ -319,12 +322,22 @@ def is_break(p):
     return bool(re.fullmatch(r"[*＊·.…\s]+", p)) and len(p) <= 12
 
 
+def para_html(p):
+    """Абзац главы в HTML: разрыв сцены, ветка [сообщений] построчно (chatlines.py) или обычный."""
+    if is_break(p):
+        return '<p class="sb">%s</p>' % esc(p)
+    lines = chat_lines(p)
+    if lines:
+        return '<p class="chat">%s</p>' % "".join(
+            '<span class="ln%s">%s</span>' % (" re" if reply else "", esc(line)) for line, reply in lines)
+    return "<p>%s</p>" % esc(p)
+
+
 def chapter_page(ch, chapters, idx):
     n, name, paras = ch
     prev_n = chapters[idx - 1][0] if idx > 0 else None
     next_n = chapters[idx + 1][0] if idx + 1 < len(chapters) else None
-    body = "\n".join('<p class="sb">%s</p>' % esc(p) if is_break(p) else "<p>%s</p>" % esc(p)
-                     for p in paras)
+    body = "\n".join(para_html(p) for p in paras)
     words = sum(len(p.split()) for p in paras)
     lst = "".join('<a href="%d.html"%s><span class="no">%d</span><span>%s</span></a>'
                   % (c[0], ' class="cur"' if c[0] == n else "", c[0], esc(c[1])) for c in chapters)
@@ -403,10 +416,15 @@ def index_page(chapters, files):
 # Файлы для скачивания
 # --------------------------------------------------------------------------
 
+def txt_para(p):
+    lines = chat_lines(p)
+    return "\n".join(("  " if reply else "") + line for line, reply in lines) if lines else p
+
+
 def make_txt(chapters):
     parts = [TITLE, "%s · %s" % (ORIG, AUTHOR), ""]
     for n, name, paras in chapters:
-        parts += ["", "Глава %d. %s" % (n, name), ""] + [p + "\n" for p in paras]
+        parts += ["", "Глава %d. %s" % (n, name), ""] + [txt_para(p) + "\n" for p in paras]
     return "\n".join(parts).replace("\n\n\n\n", "\n\n\n") + "\n"
 
 
@@ -414,10 +432,11 @@ def make_html(chapters):
     css = ("body{max-width:760px;margin:auto;padding:24px;font:18px/1.8 Georgia,serif;color:#222}"
            "h1{text-align:center}h2{margin-top:2.4em;page-break-before:always}"
            ".toc a{display:block;color:#c43d12;text-decoration:none;margin:2px 0}"
-           "img{display:block;margin:auto;max-width:320px;width:60%}")
+           "img{display:block;margin:auto;max-width:320px;width:60%}"
+           ".chat .ln{display:block}.chat .re{padding-left:1.4em}")
     toc = "".join('<a href="#c%d">Глава %d. %s</a>' % (n, n, esc(name)) for n, name, _ in chapters)
     body = "".join('<h2 id="c%d">Глава %d. %s</h2>%s' % (
-        n, n, esc(name), "".join("<p>%s</p>" % esc(p) for p in paras)) for n, name, paras in chapters)
+        n, n, esc(name), "".join(para_html(p) for p in paras)) for n, name, paras in chapters)
     cover = ""
     if os.path.exists(COVER):
         cover = '<img src="data:image/jpeg;base64,%s" alt="">' % base64.b64encode(open(COVER, "rb").read()).decode()
@@ -425,6 +444,13 @@ def make_html(chapters):
             'content="width=device-width,initial-scale=1"><title>%s</title><style>%s</style></head><body>'
             '%s<h1>%s</h1><p style="text-align:center">%s · %s</p><div class="toc">%s</div>%s</body></html>'
             % (esc(TITLE), css, cover, esc(TITLE), esc(ORIG), esc(AUTHOR), toc, body))
+
+
+def fb2_para(p, x):
+    lines = chat_lines(p)
+    if lines:
+        return "".join("<p>%s</p>" % x(line) for line, _ in lines)
+    return "<p>%s</p>" % x(p)
 
 
 def make_fb2(chapters):
@@ -438,7 +464,7 @@ def make_fb2(chapters):
     ann = "".join("<p>%s</p>" % x(re.sub("<[^>]+>", " ", s)) for s in SYNOPSIS)
     sections = "".join(
         "<section><title><p>Глава %d. %s</p></title>%s</section>" % (
-            n, x(name), "".join("<empty-line/>" if is_break(p) else "<p>%s</p>" % x(p) for p in paras))
+            n, x(name), "".join("<empty-line/>" if is_break(p) else fb2_para(p, x) for p in paras))
         for n, name, paras in chapters)
     return ('<?xml version="1.0" encoding="utf-8"?>\n'
             '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" '
@@ -470,6 +496,7 @@ PDF_CSS = ("@page{size:A4;margin:18mm 17mm}"
            "body{margin:0;font:12pt/1.55 Georgia,'PT Serif',serif;color:#111}"
            "h2{font-size:15pt;margin:0 0 1.1em;page-break-before:always}"
            "p{margin:0 0 .55em}p.sb{text-align:center;letter-spacing:.4em}"
+           "p.chat .ln{display:block}p.chat .re{padding-left:1.4em}"
            ".t{text-align:center;font-size:24pt;font-weight:bold;margin:1.2em 0 .3em}"
            ".s{text-align:center;color:#555}img{display:block;margin:1.5em auto;width:70%}")
 PDF_MERGE = r"""
@@ -491,9 +518,8 @@ def pdf_part_html(chunk, first):
         if os.path.exists(COVER):
             top = '<img src="data:image/jpeg;base64,%s" alt="">' % base64.b64encode(open(COVER, "rb").read()).decode()
         top += '<div class="t">%s</div><div class="s">%s · %s</div>' % (esc(TITLE), esc(ORIG), esc(AUTHOR))
-    body = "".join('<h2>Глава %d. %s</h2>%s' % (n, esc(name), "".join(
-        '<p class="sb">%s</p>' % esc(p) if is_break(p) else "<p>%s</p>" % esc(p) for p in paras))
-        for n, name, paras in chunk)
+    body = "".join('<h2>Глава %d. %s</h2>%s' % (n, esc(name), "".join(para_html(p) for p in paras))
+                   for n, name, paras in chunk)
     return ('<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>%s</style></head>'
             '<body>%s%s</body></html>' % (PDF_CSS, top, body))
 

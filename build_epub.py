@@ -10,6 +10,7 @@ import zipfile
 from datetime import datetime, timezone
 
 import author_numbers
+from chatlines import chat_lines
 from finalize import TITLE_RE
 
 # Названия сведены с карточкой на RanobeLIB слово в слово. Расходиться им нельзя:
@@ -49,6 +50,14 @@ p {
     text-indent: 1.5em;
     margin-top: 0;
     margin-bottom: 0.6em;
+}
+p.chat {
+    text-indent: 0;
+    text-align: left;
+    margin-bottom: 0.2em;
+}
+p.chat.re {
+    margin-left: 1.4em;
 }
 p.divider, hr {
     text-align: center;
@@ -268,6 +277,10 @@ def build_epub(max_chapter=None):
                 p_escaped = html.escape(p)
                 if p_escaped == "* * *" or p_escaped == "***":
                     paras_html.append('<p class="divider">* * *</p>')
+                elif chat_lines(p):
+                    # Ветка [сообщений], склеенная источником в один абзац, — построчно (chatlines.py).
+                    for line, reply in chat_lines(p):
+                        paras_html.append('<p class="chat%s">%s</p>' % (" re" if reply else "", html.escape(line)))
                 else:
                     # Convert single newline inside paragraph to <br/> if any
                     p_formatted = p_escaped.replace("\n", "<br/>")
