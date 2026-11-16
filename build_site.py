@@ -385,8 +385,10 @@ def index_page(chapters, files):
                   % (n, n, esc(name)) for n, name, _ in chapters)
     toc += "".join('<a class="soon"><span class="no">%d</span><span class="nm">переводится…</span></a>' % n
                    for n in range(done + 1, min(done + 4, TOTAL + 1)))
-    dl = "".join('<a href="files/%s" download><b>%s</b><small>%s · %s</small></a>'
-                 % (fn, label, note, size) for fn, label, note, size in files)
+    # Версия сборки в адресе: Cloudflare кеширует PDF у себя и велит браузеру держать его
+    # 4 часа поверх наших заголовков, — с новым адресом после пересборки качается новый файл.
+    dl = "".join('<a href="files/%s?v=%s" download="%s"><b>%s</b><small>%s · %s</small></a>'
+                 % (fn, VERSION, fn, label, note, size) for fn, label, note, size in files)
     stamp = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
     first = '<a class="btn main" href="ch/1.html">📖 Читать</a>' if chapters else ""
     return (head(TITLE + " — читать онлайн", " ".join(re.sub("<[^>]+>", " ", s) for s in SYNOPSIS)[:300]) +
