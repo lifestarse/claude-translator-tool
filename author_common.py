@@ -226,9 +226,11 @@ def chapter_tail(idx):
     return "\n\n".join(reversed(tail))
 
 
-def validate_chapter(idx, target_chars):
-    """Формальная приёмка написанной главы. Пустой список — принята."""
-    path = ru_path(idx)
+def validate_chapter(idx, target_chars, path=None):
+    """Формальная приёмка написанной главы. Пустой список — принята.
+
+    path — проверить текст не из ru/ (сравнение моделей, write_compare.py)."""
+    path = path or ru_path(idx)
     if not os.path.exists(path):
         return ["файл главы не записан"]
     text = read_text(path).strip()

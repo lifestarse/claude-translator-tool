@@ -35,6 +35,7 @@ qc_batches/*
 qc_verdicts/*
 !qc_verdicts/.gitkeep
 # Режим письма: план, библия, заметки и задания — данные книги
+compare/
 story/
 write_tasks/
 ru_rejected/
