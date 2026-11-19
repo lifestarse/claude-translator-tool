@@ -24,9 +24,11 @@ import os
 
 import autorun
 from author_common import (
+    CHRONICLER_MODEL,
     DIGESTS_FILE,
     MAX_THREADS,
     OUTLINE_FILE,
+    PLANNER_MODEL,
     STORY_DIR,
     TASK_DIR,
     arc_of,
@@ -273,14 +275,14 @@ def plan_block(concept, lo, hi, model, effort):
     save_json(OUTLINE_FILE, outline)
 
 
-def ensure_plan(concept, idx, model, effort):
+def ensure_plan(concept, idx, model, effort, chronicle_model=None):
     """Гарантировать, что у главы idx есть план, а всё дописанное до неё сведено.
 
     Блок глав не пересекает границу арки: следующую арку лучше планировать,
     когда эта уже написана и её итог сведён."""
     os.makedirs(TASK_DIR, exist_ok=True)
     os.makedirs(STORY_DIR, exist_ok=True)
-    ensure_digests(concept, idx, model, effort)
+    ensure_digests(concept, idx, chronicle_model or model, effort)
     ensure_arcs(concept, idx, model, effort)
     outline = load_outline()
     if str(idx) in outline["chapters"]:
@@ -293,7 +295,10 @@ def main():
     ap = argparse.ArgumentParser(description="План книги для режима письма")
     ap.add_argument("--upto", type=int, help="довести поглавный план до этой главы")
     ap.add_argument("--show", action="store_true", help="показать готовый план и выйти")
-    ap.add_argument("--model", default="claude-opus-5-5")
+    ap.add_argument("--model", default=PLANNER_MODEL,
+                    help="модель планировщика (по умолчанию %s)" % PLANNER_MODEL)
+    ap.add_argument("--chronicle-model", default=CHRONICLER_MODEL,
+                    help="модель летописца (по умолчанию %s)" % CHRONICLER_MODEL)
     ap.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     args = ap.parse_args()
 
@@ -313,7 +318,7 @@ def main():
     upto = min(args.upto or done + 1, concept["total"])
     idx = done + 1
     while idx <= upto:
-        ensure_plan(concept, idx, args.model, args.effort)
+        ensure_plan(concept, idx, args.model, args.effort, args.chronicle_model)
         idx = max(int(n) for n in load_outline()["chapters"]) + 1
     print("Спланировано глав: %d из %d. Смотреть: python write_plan.py --show"
           % (max([int(n) for n in load_outline()["chapters"]] or [0]), concept["total"]))

@@ -29,8 +29,12 @@ import shutil
 
 import autorun
 from author_common import (
+    CHRONICLER_MODEL,
+    EDITOR_MODEL,
+    PLANNER_MODEL,
     STORY_DIR,
     TASK_DIR,
+    WRITER_MODEL,
     apply_notes,
     bible_block,
     chapter_tail,
@@ -132,7 +136,7 @@ def review(idx, model, effort):
 
 
 def write_chapter(concept, idx, args):
-    ensure_plan(concept, idx, args.plan_model or args.model, args.effort)
+    ensure_plan(concept, idx, args.plan_model, args.effort, args.chronicle_model)
     feedback, edited = None, False
     for attempt in range(1, MAX_ATTEMPTS + 1):
         build_task(concept, idx, feedback)
@@ -151,7 +155,7 @@ def write_chapter(concept, idx, args):
         problems += note_problems
         if not problems and args.edit and not edited:
             edited = True            # редактор возвращает главу не больше одного раза
-            problems = review(idx, args.edit_model or args.model, args.effort)
+            problems = review(idx, args.edit_model, args.effort)
             if problems:
                 autorun.log("    гл.%04d: редактор вернул на переписывание" % idx)
         if not problems:
@@ -170,10 +174,15 @@ def main():
     ap = argparse.ArgumentParser(description="Режим письма: модель пишет книгу по замыслу")
     ap.add_argument("--to", type=int, help="последняя глава этого прогона")
     ap.add_argument("--count", type=int, help="сколько глав написать")
-    ap.add_argument("--model", default="claude-opus-5-5", help="модель писателя")
-    ap.add_argument("--plan-model", help="модель планировщика (по умолчанию как --model)")
+    ap.add_argument("--model", default=WRITER_MODEL,
+                    help="модель писателя (по умолчанию %s)" % WRITER_MODEL)
+    ap.add_argument("--plan-model", default=PLANNER_MODEL,
+                    help="модель планировщика (по умолчанию %s)" % PLANNER_MODEL)
+    ap.add_argument("--chronicle-model", default=CHRONICLER_MODEL,
+                    help="модель летописца (по умолчанию %s)" % CHRONICLER_MODEL)
     ap.add_argument("--edit", action="store_true", help="каждую главу читает агент editor")
-    ap.add_argument("--edit-model", help="модель редактора (по умолчанию как --model)")
+    ap.add_argument("--edit-model", default=EDITOR_MODEL,
+                    help="модель редактора (по умолчанию %s)" % EDITOR_MODEL)
     ap.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     ap.add_argument("--status", action="store_true")
     args = ap.parse_args()
@@ -203,7 +212,7 @@ def main():
             raise SystemExit(1)
     # Итог арки, которая кончилась последней главой прогона, сводится сразу:
     # иначе он появился бы только при следующем запуске.
-    ensure_digests(concept, last + 1, args.plan_model or args.model, args.effort)
+    ensure_digests(concept, last + 1, args.chronicle_model, args.effort)
     autorun.log("Письмо: главы %d–%d готовы" % (first, last))
 
 

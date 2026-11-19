@@ -29,6 +29,15 @@ BIBLE_FILE = os.path.join(STORY_DIR, "bible.json")
 SUMMARIES_FILE = os.path.join(STORY_DIR, "summaries.json")
 DIGESTS_FILE = os.path.join(STORY_DIR, "digests.json")
 
+# Модели по ролям. Выбраны слепым сравнением 13 моделей на двух главах
+# (write_compare.py): писатель делает основной объём, и здесь решает цена
+# главы; план читает вся книга дальше, поэтому планировщик — самая сильная;
+# редактор и летописец должны быть не слабее писателя.
+WRITER_MODEL = "claude-haiku-5-5"
+PLANNER_MODEL = "claude-fable-5-2"
+EDITOR_MODEL = "claude-opus-5-5"
+CHRONICLER_MODEL = "claude-opus-5-5"
+
 DEFAULT_TOTAL = 100          # глав в книге, если в BOOK.md не указано
 DEFAULT_CHARS = 9000         # знаков в главе
 DEFAULT_BLOCK = 10           # глав в одном блоке плана
