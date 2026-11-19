@@ -7,15 +7,21 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = os.path.dirname(os.path.abspath(__file__))
-for _need in ("skeleton.json", "merged.json"):
-    if not os.path.exists(os.path.join(ROOT, "glossmap", _need)):
-        raise SystemExit("Нет glossmap/%s — карта мира собирается из скелета "
-                         "co-occurrence и сведённых выводов агентов glossmap "
-                         "(см. README, стадия 10)." % _need)
-sk = json.load(io.open(os.path.join(ROOT, "glossmap", "skeleton.json"), encoding="utf-8"))
-merged = json.load(io.open(os.path.join(ROOT, "glossmap", "merged.json"), encoding="utf-8"))
+SKELETON = os.path.join(ROOT, "glossmap", "skeleton.json")
+MERGED = os.path.join(ROOT, "glossmap", "merged.json")
+# Сборщика скелета и слияния в каркасе нет (стадия 10 опциональна): без входов
+# говорим, чего не хватает, вместо трассировки FileNotFoundError.
+_missing = [os.path.relpath(p, ROOT) for p in (SKELETON, MERGED) if not os.path.exists(p)]
+if _missing:
+    raise SystemExit("Карта новеллы не собирается: нет %s.\n"
+                     "Их должна готовить стадия 10 (glossmap/glosscheck), но сборщика "
+                     "скелета и merged.json в каркасе пока нет." % ", ".join(_missing))
+sk = json.load(io.open(SKELETON, encoding="utf-8"))
+merged = json.load(io.open(MERGED, encoding="utf-8"))
 
-ORDER = ["Персонажи и титулы", "Юниты Линь", "Существа и виды",
+# Порядок показа групп. Группы из данных, которых здесь нет, не пропадают:
+# они идут следом по алфавиту (см. GROUPS ниже).
+ORDER = ["Персонажи и титулы", "Существа и виды",
          "Цивилизации и фракции", "Локации", "Оружие и устройства",
          "Явления и силы", "Прочее"]
 
@@ -153,15 +159,16 @@ body = ['<div class="wrap">',
         '<div class="bar"><div class="bar-inner">',
         '<input id="q" type="search" placeholder="Найти: имя, 中文 или слово из описания…" aria-label="Поиск по карте">',
         '<div class="chips" id="chips">']
-SLUGG = {g: "g%d" % i for i, g in enumerate(ORDER)}
-for g in ORDER:
+GROUPS = ORDER + sorted(set(groups) - set(ORDER))
+SLUGG = {g: "g%d" % i for i, g in enumerate(GROUPS)}
+for g in GROUPS:
     n = len(groups.get(g, []))
     if n:
         body.append('<button class="chip" data-g="%s">%s <span class="n">%d</span></button>'
                     % (SLUGG[g], html.escape(g), n))
 body.append('</div><span id="stat"></span></div></div>')
 
-for g in ORDER:
+for g in GROUPS:
     items = groups.get(g, [])
     if not items:
         continue

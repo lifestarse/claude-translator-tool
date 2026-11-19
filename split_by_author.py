@@ -144,7 +144,7 @@ def save_index(out, entries, data, skipped):
     idx_path = os.path.join(out, "index.json")
     payload = {
         "note": "Соответствие файла перевода авторской нумерации. Номер и том сняты "
-                "с заголовков оригинала (第N章 с перезапуском счёта на каждом томе).",
+                "с заголовков оригинала (см. author_numbers.py).",
         "chapters": sorted(entries, key=lambda e: (e["volume"], _numeric_key(e["number"]))),
         "repairs": [{"index": i, "was": w, "now": n, "why": why}
                     for i, w, n, why in data["repairs"]
@@ -163,8 +163,9 @@ def write_report(out, entries, data, skipped):
     lines = [
         "# Раскладка по авторской нумерации",
         "",
-        "Собрано `split_by_author.py`. Номер и том сняты с заголовков оригинала:",
-        "счёт `第N章` перезапускается с единицы на каждом томе, всего томов 8.",
+        "Собрано `split_by_author.py`. Номер и том сняты с заголовков оригинала",
+        "(см. `author_numbers.py`): новый том — там, где счёт начинается с единицы",
+        "заново. Всего томов: %d." % len(data["volumes"]),
         "",
         "Разложено глав: **%d**." % len(entries),
         "",

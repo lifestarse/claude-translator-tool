@@ -72,6 +72,36 @@ SITE_ID = "3"
 # Команда перевода: id из URL страницы команды на сайте.
 TEAM_ID = 0  # id команды переводчиков на сайте
 TOKEN_ENV = "RANOBELIB_TOKEN"
+# Номерной маркер абзаца [N], оставшийся после finalize — с пробелом или без.
+LEFT_MARKER_RE = re.compile(r"^\s*\[\d+\]")
+
+
+def manga_id():
+    """id тайтла — число в начале SLUG («12345--slug»), или None, пока SLUG не
+    заполнен. Считается лениво: раньше int() стоял на уровне модуля и ронял
+    импорт, а с ним `--status`, пробный прогон, passive-update и update_title —
+    всё, что к сайту даже не ходит."""
+    m = re.match(r"(\d+)--", SLUG)   # та же форма, что ждёт main.site_unconfigured
+    return int(m.group(1)) if m else None
+
+
+def require_site_settings(team=True):
+    """Отказ с подсказкой, если реквизиты тайтла не заполнены.
+
+    Звать там, где реально уходит запрос на сайт. TEAM_ID = 0 молча уехал бы
+    в тело как teams:[0] — то ли отказ на первой главе, то ли глава от чужого
+    имени. Проверяются оба поля разом, чтобы не чинить их по одному за прогон.
+    """
+    missing = []
+    if manga_id() is None:
+        missing.append("SLUG (сейчас %r) — возьми из URL страницы тайтла, "
+                       "вид «12345--slug», число в начале обязательно" % SLUG)
+    if team and not TEAM_ID:
+        missing.append("TEAM_ID (сейчас 0) — id из URL страницы команды переводчиков")
+    if missing:
+        raise SystemExit("Реквизиты RanobeLIB не заполнены в publish_ranobelib.py:\n  "
+                         + "\n  ".join(missing)
+                         + "\n(В BOOK.md те же поля — для памяти, скрипт читает их отсюда.)")
 
 LEDGER = os.path.join(ROOT, "ranobelib_published.json")
 LOCK = os.path.join(ROOT, ".publish_lock")
@@ -141,18 +171,28 @@ def to_doc(paragraphs):
     }
 
 
-def build_payload(idx, vol, num):
-    """(payload, беда) — беда не None, если главу отправлять нельзя."""
+def build_payload(idx, vol, num, text=None):
+    """(payload, беда) — беда не None, если главу отправлять нельзя.
+
+    text — перевод из памяти вместо файла в ru/: пробный прогон passive-update
+    готовит главу, не записывая её на диск, и проверять должен именно это.
+    """
     if not os.path.exists(ru_path(idx)):
         return None, "перевода нет"
-    ru_paras = split_paragraphs(read_text(ru_path(idx)))
+    ru_text = text if text is not None else read_text(ru_path(idx))
+    ru_paras = split_paragraphs(ru_text)
     source = read_text(chapter_path(idx)).strip()
     src_paras = split_paragraphs(source)
     if len(ru_paras) != len(src_paras):
         return None, "абзацев %d против %d в оригинале" % (len(ru_paras), len(src_paras))
-    if marker_count(ru_paras) > marker_count(src_paras):
+    # Только числовой маркер [N]: прежняя эвристика «начинается с [ и ] в первых
+    # шести знаках» отказывала главам, где перевод начинается с системной
+    # плашки вроде «[Вор]» — в этой книге 【…】 в начале главы не редкость.
+    # Без \s в конце: finalize снимает и «[12]Текст» без пробела (MARKER_RE),
+    # а PARA_MARKER_RE такой остаток пропустил бы на сайт.
+    if any(LEFT_MARKER_RE.match(p) for p in ru_paras):
         return None, "остались служебные маркеры — сначала finalize.py"
-    problems = validate_translation(source, read_text(ru_path(idx)))
+    problems = validate_translation(source, ru_text)
     if problems:
         return None, "не прошла приёмку: %s" % "; ".join(problems[:2])
 
@@ -173,7 +213,7 @@ def build_payload(idx, vol, num):
     #                  "0" проходит как «платно» и требует поле price;
     #   attachments  — картинки главы, у текста пустой список.
     return {
-        "manga_id": MANGA_ID,
+        "manga_id": manga_id(),
         "volume": str(vol),
         "number": str(num),
         "name": name,
@@ -350,6 +390,7 @@ def confirm_recovered_post(payload, token):
 
 def update_chapter(chid, payload, token):
     """Правка уже лежащей главы. В отличие от карточки тайтла, отвечает честно."""
+    require_site_settings()
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request("%s/chapters/%d" % (API, chid), data=data, method="PUT")
     req.add_header("Authorization", "Bearer " + token)
@@ -472,6 +513,8 @@ def remote_chapters(token):
 
 def post_chapter(payload, token, retries=5):
     """Отправка одной главы. 429 и обрывы связи пережидаются, глава не теряется."""
+    # passive-update зовёт эту функцию напрямую, мимо run() — проверка здесь же.
+    require_site_settings()
     wait = 10
     for attempt in range(1, retries + 1):
         try:
@@ -566,6 +609,10 @@ def main():
 
 
 def run(args):
+    # До сайта доходят только --publish и --sync (сверка читает сайт даже
+    # вхолостую). --status и пробный прогон работают без реквизитов.
+    if args.publish or args.sync:
+        require_site_settings()
     mapping, collisions, covered = load_volume_map(rebuild=args.rebuild_map)
     ledger = load_json(LEDGER, {"published": {}}) or {"published": {}}
 
@@ -573,6 +620,21 @@ def run(args):
         i for i in mapping
         if os.path.exists(ru_path(i))
     )
+    # Разметка, не понявшая заголовки тайтла, молча выложила бы горстку глав
+    # под мусорными номерами. Переведённое, но не размеченное — повод
+    # остановиться и чинить author_numbers.py, а не публиковать.
+    translated = [
+        int(f[8:12]) for f in os.listdir(os.path.join(ROOT, "ru"))
+        if re.match(r"chapter_\d{4}\.txt$", f)
+    ]
+    lost = [i for i in translated if i not in mapping and i not in covered]
+    if translated and len(lost) > 0.05 * len(translated):
+        msg = ("Без авторского номера %d из %d переведённых глав (например %s) — "
+               "разметка author_numbers.py не понимает заголовки тайтла."
+               % (len(lost), len(translated), ", ".join("%04d" % i for i in lost[:5])))
+        if args.publish or args.sync:
+            raise SystemExit(msg + " Выкладка остановлена.")
+        print("ВНИМАНИЕ: " + msg)
     if args.range:
         lo, hi = args.range
         ready = [i for i in ready if lo <= i <= hi]

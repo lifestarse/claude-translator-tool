@@ -6,6 +6,7 @@ Reports by default and changes nothing. Two things it can do on request:
     python qc_report.py                 # summary
     python qc_report.py --detail        # every defect, with quotes
     python qc_report.py --quarantine    # retranslate verdicts -> ru_rejected/
+    python qc_report.py --qcfix-draft   # fix verdicts -> заготовка qcfix_tasks.json
 
 Quarantine is deliberately opt-in and deliberately separate from build_qc.py:
 an agent's verdict is evidence, not an execution order, and moving 40 finished
@@ -28,7 +29,7 @@ import os
 import shutil
 import sys
 
-from common import ROOT, load_json, load_task_provenance, ru_path
+from common import ROOT, load_json, load_task_provenance, ru_path, save_json, text_fingerprint
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -37,6 +38,9 @@ VERDICT_DIR = os.path.join(ROOT, "qc_verdicts")
 QC_DIR = os.path.join(ROOT, "qc_batches")
 META_DIR = os.path.join(QC_DIR, "meta")
 QUARANTINE_DIR = os.path.join(ROOT, "ru_rejected")
+QCFIX_TASKS = os.path.join(ROOT, "qcfix_tasks.json")
+# Виды дефектов, которые умеет build_qcfix.py; «spam» чистится не им.
+QCFIX_KINDS = ("glossary", "calque", "omission", "invention", "meaning")
 
 # Below this many verdicts in a group, comparing defect RATES between groups is
 # arithmetic on noise: on six random chapters one verdict moves the figure by
@@ -49,6 +53,7 @@ KIND_RU = {
     "spam": "реклама сайта",
     "glossary": "термин не по канону",
     "calque": "подстрочник",
+    "meaning": "ошибка смысла",
 }
 VERDICTS = ("ok", "fix", "retranslate")
 
@@ -58,7 +63,9 @@ def load_verdicts():
         return [], ["каталога qc_verdicts/ нет — приёмка ещё не запускалась"]
     out, problems = [], []
     for name in sorted(os.listdir(VERDICT_DIR)):
-        if not name.endswith(".json"):
+        # .quarantined.json — вердикт уже исполнен --quarantine; глава с тех
+        # пор переводится заново, и он ей больше не указ.
+        if not name.endswith(".json") or name.endswith(".quarantined.json"):
             continue
         data = load_json(os.path.join(VERDICT_DIR, name))
         if not isinstance(data, dict):
@@ -95,11 +102,70 @@ def load_provenance():
     return load_task_provenance(QC_DIR)
 
 
+def write_qcfix_draft(fix):
+    """Дописать в qcfix_tasks.json заготовки по вердиктам fix (applied=false).
+
+    Это ЗАГОТОВКА, а не решение: вердикт называет один абзац там, где дефект
+    тянется через пять, и не знает соседних абзацев, которые трогать нельзя.
+    Человек вычитывает её (paras, keep_out, canon/cn), затем
+    `python build_qcfix.py --check`. Главы, уже лежащие в файле, не трогаются.
+    """
+    spec = load_json(QCFIX_TASKS) or {"tasks": []}
+    if not isinstance(spec, dict) or not isinstance(spec.get("tasks", []), list):
+        print("[!] %s не в формате {\"tasks\": [...]} — заготовка не дописана."
+              % QCFIX_TASKS)
+        return
+    have = {t.get("chapter") for t in spec.get("tasks", []) if isinstance(t, dict)}
+    added, skipped = [], []
+    for v in sorted(fix, key=lambda v: v["index"]):
+        if v["index"] in have:
+            continue
+        defects = []
+        for i in v["issues"]:
+            if not isinstance(i, dict):
+                continue
+            try:
+                para = int(i.get("para"))
+            except (TypeError, ValueError):
+                para = None
+            if para is not None and para < 1:
+                para = None                     # абзацы считаются с 1
+            if i.get("kind") not in QCFIX_KINDS or para is None or not i.get("quote"):
+                skipped.append("%04d/%s" % (v["index"], i.get("kind", "?")))
+                continue
+            defects.append({
+                "kind": i["kind"],
+                "paras": [para],
+                "quotes": {str(para): i["quote"]},
+                "why": i.get("why", ""),
+                "canon": "",
+                "cn": "",
+                "keep_out": [],
+                "keep_out_why": "",
+            })
+        if defects:
+            spec.setdefault("tasks", []).append(
+                {"chapter": v["index"], "defects": defects, "applied": False})
+            added.append(v["index"])
+    if added:
+        save_json(QCFIX_TASKS, spec)
+    print("")
+    print("[+] Заготовок в qcfix_tasks.json дописано: %d%s"
+          % (len(added), (" (%s)" % ", ".join(str(i) for i in added)) if added else ""))
+    if skipped:
+        print("    Не вошли (вид не для qcfix, нет номера абзаца или цитаты): %s"
+              % ", ".join(skipped))
+    if added:
+        print("    Вычитать paras/keep_out/canon, затем: python build_qcfix.py --check")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Сводка вердиктов приёмки")
     ap.add_argument("--detail", action="store_true")
     ap.add_argument("--quarantine", action="store_true",
                     help="перенести главы с вердиктом retranslate в ru_rejected/")
+    ap.add_argument("--qcfix-draft", action="store_true",
+                    help="дописать заготовку qcfix_tasks.json из вердиктов fix")
     args = ap.parse_args()
 
     verdicts, problems = load_verdicts()
@@ -179,7 +245,8 @@ def main():
             print("[!] Пометка отбора не найдена для глав: %s"
                   % ", ".join(str(i) for i in sorted(unknown_origin)))
             print("    Восстановление: впиши \"picked_by\" (risk/sample/only) вручную "
-                  "в qc_batches/meta/qc_NNNN.json этих глав")
+                  "в qc_batches/meta/qc_NNNN.json этих глав.")
+            print("    Отпечатки заданий: python build_qc.py --adopt")
 
         risk, sample = groups.get("risk"), groups.get("sample")
         if risk and sample:
@@ -250,20 +317,52 @@ def main():
         print("")
         print("[i] Чинится на месте: %s" % ", ".join(str(v["index"]) for v in fix))
         print("    Термины — через term_fixes.json и агента termfix.")
+        if not args.qcfix_draft:
+            print("    Остальное — заготовка для qcfix: python qc_report.py --qcfix-draft")
 
     if args.quarantine and retr:
         os.makedirs(QUARANTINE_DIR, exist_ok=True)
-        moved = 0
+        moved, mismatch, no_fp = [], [], []
         for v in retr:
-            src = ru_path(v["index"])
+            idx = v["index"]
+            src = ru_path(idx)
             if not os.path.exists(src):
                 continue
-            shutil.move(src, os.path.join(QUARANTINE_DIR, "chapter_%04d.txt" % v["index"]))
-            moved += 1
+            # Вердикт судил конкретный текст. Если глава с тех пор переведена
+            # заново, старый retranslate унёс бы НОВЫЙ перевод.
+            want = ((prov.get(idx) or {}).get("fp") or {}).get("ru")
+            if not want:
+                no_fp.append(idx)
+                continue
+            if text_fingerprint(src) != want:
+                mismatch.append(idx)
+                continue
+            dst = os.path.join(QUARANTINE_DIR, "chapter_%04d.txt" % idx)
+            n = 1
+            while os.path.exists(dst):          # прежний отбракованный не затирать
+                dst = os.path.join(QUARANTINE_DIR, "chapter_%04d.%d.txt" % (idx, n))
+                n += 1
+            shutil.move(src, dst)
+            vpath = os.path.join(VERDICT_DIR, v["file"])
+            os.replace(vpath, vpath[:-len(".json")] + ".quarantined.json")
+            moved.append(idx)
         print("")
-        print("[+] Перемещено в ru_rejected/: %d файлов." % moved)
-        print("    Дальше: python build_batches.py --only %s"
-              % " ".join(str(v["index"]) for v in retr))
+        print("[+] Перемещено в ru_rejected/: %d файлов." % len(moved))
+        if mismatch:
+            print("[i] Текст изменился после вердикта — не тронуто: %s"
+                  % ", ".join(str(i) for i in mismatch))
+            print("    Вердикт устарел; переоценить: python build_qc.py --only %s"
+                  % " ".join(str(i) for i in mismatch))
+        if no_fp:
+            print("[!] Нет отпечатка текста, который судили — не тронуто: %s"
+                  % ", ".join(str(i) for i in no_fp))
+            print("    Сверить нечем: проверь главы глазами и перенеси вручную.")
+        if moved:
+            print("    Дальше: python build_batches.py --only %s"
+                  % " ".join(str(i) for i in moved))
+
+    if args.qcfix_draft and fix:
+        write_qcfix_draft(fix)
 
     raise SystemExit(1 if retr else 0)
 

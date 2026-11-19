@@ -34,9 +34,12 @@ from common import (
     CHAPTERS_DIR,
     ROOT,
     chapter_path,
+    load_excluded,
     load_json,
+    parse_title_number,
     read_text,
     split_paragraphs,
+    strip_book_prefix,
 )
 
 OVERRIDES = os.path.join(ROOT, "ranobelib_numbers.json")
@@ -53,7 +56,23 @@ NUM_PATTERNS = LANG.nums
 
 def parse_number(head):
     """(номер, пометка) по заголовку главы. (None, причина) — номера нет."""
-    return LANG.parse_number(head)
+    if LANG.code != "zh":
+        return LANG.parse_number(head)
+    # Номер китайскими цифрами («一百四十九 …») разбирается раньше шаблонов.
+    n = parse_title_number(head)
+    if n is not None:
+        return n, None
+    head = strip_book_prefix(head)
+    # Шаблоны привязаны к НАЧАЛУ заголовка (match, а не search) после снятия
+    # префикса 《书名》. Без якоря мягкие шаблоны ловили цифры из названия
+    # главы: «六十六 符文第1定律» давало 1, «看清楚這3張臉» — 3, и каждая ложная
+    # единица открывала новый том.
+    for rx, note in NUM_PATTERNS:
+        m = rx.match(head)
+        if m:
+            digits = "".join(g for g in m.groups() if g)
+            return int(digits), note
+    return None, "в заголовке нет номера главы"
 
 
 def head_of(idx):
@@ -78,12 +97,20 @@ def build(indexes=None):
       duplicates [(индекс, базовый номер, выданный номер, кто занял базовый)]
       covered    {индекс: владелец склейки} — текст уже входит в другую главу
       jumps      [(индекс, предыдущий, текущий)] — дырки в нумерации
+      excluded   [(индекс, причина)] — из excluded_chapters.json, в разметку не идут
     """
     if indexes is None:
         indexes = sorted(
             int(f[8:12]) for f in os.listdir(CHAPTERS_DIR)
             if f.startswith("chapter_") and f.endswith(".txt")
         )
+    # Исключённые главы в разметку не пускаются. Повтор-копия иначе проходит
+    # «починку по соседям»: файл 845 второй книги — та же глава 842, что и 844,
+    # но стоит между 842 и 844 и получал номер 843, которого на сайте нет
+    # вовсе. Под этим номером в книгу ушёл бы второй экземпляр главы 842.
+    skip = load_excluded()
+    excluded = [(i, skip[i]) for i in indexes if i in skip]
+    indexes = [i for i in indexes if i not in skip]
 
     titles, raw = {}, {}
     unnumbered, notes = [], {}
@@ -197,6 +224,7 @@ def build(indexes=None):
         "duplicates": duplicates,
         "covered": covered,
         "jumps": jumps,
+        "excluded": excluded,
         "numeric_key": _numeric_key,
     }
 
@@ -221,6 +249,9 @@ def report(data):
     for i, owner in list(data["covered"].items())[:10]:
         print("    гл.%04d входит в склейку гл.%04d" % (i, owner))
     print("Дырок в нумерации: %d" % len(data["jumps"]))
+    for i, was, now in data["jumps"][:10]:
+        print("    гл.%04d: после %d сразу %d" % (i, was, now))
+    print("Исключено (excluded_chapters.json): %d" % len(data["excluded"]))
 
 
 if __name__ == "__main__":

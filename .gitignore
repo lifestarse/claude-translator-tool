@@ -34,6 +34,12 @@ qc_batches/*
 !qc_batches/.gitkeep
 qc_verdicts/*
 !qc_verdicts/.gitkeep
+# Каталог и снимки скачивания — тоже данные тайтла (excluded_chapters.json
+# ведётся руками и коммитится)
+catalog.json
+manifest.json
+scrape_failures.json
+ru_by_author/
 
 # Состояние и журналы прогонов
 *.log
@@ -77,3 +83,4 @@ morph_doubt.json
 site_preview/
 titles_glossary.json
 ru_backup*/
+ru_old_prompt_backup/

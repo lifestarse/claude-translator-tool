@@ -100,9 +100,10 @@ def load_fixes():
         # китайского термина по исходникам; пустота значит, что термин не
         # нашёлся и зона правила неизвестна. Правило «Страж <- Защитник» с
         # пустой зоной ушло бы на весь корпус, где «Защитник» — чужой канон.
-        # Отсутствующий ключ — та же пустая зона: README и реестр требуют зону
-        # явно, «по умолчанию везде» не бывает.
-        if not f.get("chapters"):
+        # Отсутствующий ключ chapters — то же самое: реестр пополняется
+        # вручную, и пропущенное поле не должно молча означать «везде».
+        # Правило на весь корпус — только явным "global": true.
+        if not f.get("chapters") and f.get("global") is not True:
             unscoped.append(f["canon"])
             continue
         conflicts = self_conflict(f["canon"], f["find"])
@@ -118,7 +119,7 @@ def load_fixes():
             "was": f.get("was", ""),
             "strict": f.get("strict", False),
             "res": [re.compile(p) for p in keep],
-            "chapters": set(f["chapters"]) if f.get("chapters") else None,
+            "chapters": None if f.get("global") is True else set(f["chapters"]),
         })
     if broken:
         print("[!] Шаблоны, ловящие собственный канон — отброшены:")
@@ -128,7 +129,8 @@ def load_fixes():
                       % (canon, pat, form, "" if kept else " — правило пусто, снято целиком"))
         print("")
     if unscoped:
-        print("[!] Правила с пустой зоной глав — сняты: %s" % ", ".join(unscoped))
+        print("[!] Правила без зоны глав — сняты: %s" % ", ".join(unscoped))
+        print("    Нужна зона \"chapters\": [...] или явный \"global\": true.")
         print("")
     return out
 
@@ -238,6 +240,13 @@ def main():
 
     if not args.dry_run:
         os.makedirs(FIX_DIR, exist_ok=True)
+        # Маркеры драйвера от прошлой сборки: с ними новые задания по уже
+        # правленным главам молча пропускались бы (termfix_driver смотрит
+        # .done/.claim). Не запускать сборку, пока работают драйверы.
+        for old in os.listdir(FIX_DIR):
+            if old.startswith("fix_") and old.rsplit(".", 1)[-1] in (
+                    "done", "part", "fail", "claim"):
+                os.remove(os.path.join(FIX_DIR, old))
 
     prepared = []
     for name in names:

@@ -5,8 +5,12 @@
     python parallel_status.py --watch      # обновляется каждые 30 с (Ctrl+C — выход)
     python parallel_status.py --watch 10   # каждые 10 с
 
-Читает parallel_range_NN.json (границы участков, пишет autorun), логи autorun_NN.log
-(последняя строка = чем слот занят) и ru/ (сколько глав участка уже на диске).
+Слоты находит сам: по файлам parallel_range_NN.json и autorun_state_NN.json,
+которые autorun пишет при запуске с --range/--slot. Для прогонов, запущенных
+до появления этих файлов, границы берутся из строки лога «Последовательный
+прогон: … с LO по HI». Ручной parallel_ranges.json, если он есть, тоже
+учитывается. Дальше читает логи autorun_NN.log (последняя строка = чем слот
+занят) и ru/ (сколько глав участка уже на диске).
 Ничего не пишет.
 """
 
@@ -26,6 +30,50 @@ if hasattr(sys.stdout, "reconfigure"):
 
 RANGES = os.path.join(ROOT, "parallel_ranges.json")
 DONE_RE = re.compile(r"готово \|")
+STATE_RE = re.compile(r"^autorun_state_(.+)\.json$")
+# Строка, которую autorun пишет в лог на старте каждого прогона.
+RUN_RE = re.compile(r"Последовательный прогон: \d+ глав, с (\d+) по (\d+)")
+
+
+def range_from_log(slot):
+    """(lo, hi) из самой ранней строки старта в логе слота, или None.
+
+    Берётся первая, а не последняя: после перезапуска очередь начинается с
+    места обрыва, и поздние строки показывают уже урезанный участок.
+    """
+    log_file = os.path.join(ROOT, "autorun_%s.log" % slot)
+    if not os.path.exists(log_file):
+        return None
+    with open(log_file, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = RUN_RE.search(line)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def discover_ranges():
+    """[{slot, lo, hi}] — из parallel_ranges.json, если он есть, иначе по слотам."""
+    if os.path.exists(RANGES):
+        with open(RANGES, encoding="utf-8") as fh:
+            return json.load(fh)
+    found = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "autorun_state_*.json"))):
+        m = STATE_RE.match(os.path.basename(path))
+        if not m:
+            continue
+        slot = m.group(1)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                bounds = (json.load(fh) or {}).get("range")
+        except (OSError, ValueError):
+            bounds = None
+        if not bounds:
+            bounds = range_from_log(slot)
+        if not bounds:
+            continue                 # слот без --range: участка нет, считать нечего
+        found.append({"slot": slot, "lo": int(bounds[0]), "hi": int(bounds[1])})
+    return found
 
 
 def load_ranges():
@@ -44,10 +92,11 @@ def load_ranges():
 
 
 def snapshot():
-    ranges = load_ranges()
+    ranges = load_ranges() or discover_ranges()
     if not ranges:
-        raise SystemExit("Нет участков слотов — параллельный прогон "
-                         "(autorun.py --range LO HI --slot NN) не запускался.")
+        raise SystemExit("Не нашёл ни одного слота (parallel_range_*.json или "
+                         "autorun_state_*.json с --range) — параллельный прогон "
+                         "не запускался.")
 
     excluded = load_excluded()
     total_done = total_all = 0

@@ -19,6 +19,7 @@ import sys
 from common import (
     RU_DIR,
     chapter_path,
+    parse_chapter_numbers,
     read_text,
     ru_path,
     split_paragraphs,
@@ -41,15 +42,35 @@ MARKER_RE = re.compile(r"^\s*\[(\d+)\]\s*")
 # через пробел и «глава 92 — Боевые» через тире.
 TITLE_RE = re.compile(
     r"^.*?глав[аы]\s*(\d+)(?:\s*[-–—]\s*(\d+))?\s*(?:[:.—–]+\s*|\s+)", re.I)
+# Вторая книга: в оригинале «《我的成神日志》一百四十九 邀請…» — номер китайскими
+# цифрами и без 第/章, так что «Глава» агент может и не написать: «149. Пригласить…»
+# или ««Мой дневник…» 149 …». Такой заголовок приводится к форме, только если
+# ведущее число совпало с номером из заголовка ОРИГИНАЛА — подтверждение с двух
+# сторон. Номера словами («Сто сорок девять») не трогаются: разбирать русские
+# числительные регуляркой — то самое правило по нарицательным словам, которое
+# здесь уже стоило глав. Такие заголовки ловит final_check.
+LEAD_NUM_RE = re.compile(
+    r"^(?:[«《\"“][^»》\"”\n]{1,80}[»》\"”]\s*[:.—–-]?\s*)?(\d+)\s*(?:[:.—–]+\s*|\s+)")
 # Tool-call serialisation that leaked into three files of the first wave.
 JUNK_RE = re.compile(r"</?(?:antml:)?(?:content|invoke|parameter|function_calls)\b[^>]*>")
 
 
-def normalize_title(text):
+def source_number(idx):
+    """Номер главы из заголовка оригинала или None (нет номера, склейка)."""
+    try:
+        paras = split_paragraphs(read_text(chapter_path(idx)))
+    except OSError:
+        return None
+    nums = parse_chapter_numbers(paras[0]) if paras else []
+    return nums[0] if len(nums) == 1 else None
+
+
+def normalize_title(text, src_num=None):
     """(текст, менялось ли) — первый абзац к виду «Глава N: Название».
 
     Идемпотентно: у правильного заголовка совпадение снимает «Глава N: » и
-    собирает его обратно тем же самым.
+    собирает его обратно тем же самым. src_num — номер из заголовка оригинала,
+    нужен только для заголовков без слова «Глава» (см. LEAD_NUM_RE).
     """
     paras = split_paragraphs(text)
     if not paras:
@@ -57,7 +78,14 @@ def normalize_title(text):
     head = paras[0].strip()
     m = TITLE_RE.match(head)
     if not m:
-        return text, False
+        lead = LEAD_NUM_RE.match(head) if src_num is not None else None
+        if not lead or int(lead.group(1)) != src_num:
+            return text, False
+        rest = head[lead.end():].strip()
+        if not rest:
+            return text, False
+        paras[0] = "Глава %d: %s" % (src_num, rest)
+        return "\n\n".join(paras), True
     rest = head[m.end():].strip()
     if not rest:
         return text, False          # одно только «Глава N» — трогать нечего
@@ -138,7 +166,7 @@ def finalize_one(idx):
     extra = [n for n in order if n > src_count]
 
     text = "\n\n".join(merged[n] for n in sorted(merged))
-    text, _ = normalize_title(text)
+    text, _ = normalize_title(text, source_number(idx))
     if missing or extra:
         return "fail", "пропущены абзацы %s, лишние номера %s" % (missing[:5], extra[:5]), text
     if unmarked:
@@ -171,7 +199,7 @@ def main():
             # Уже финализированные главы маркеров не имеют, но заголовок у них
             # мог остаться кривым: приведение к форме появилось позже перевода.
             current = read_text(ru_path(idx))
-            fixed, changed = normalize_title(current)
+            fixed, changed = normalize_title(current, source_number(idx))
             if changed:
                 titles += 1
                 print("[загол] гл.%04d: %s" % (idx, split_paragraphs(fixed)[0][:60]))

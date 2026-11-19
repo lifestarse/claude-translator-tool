@@ -10,25 +10,28 @@ import zipfile
 from datetime import datetime, timezone
 
 import author_numbers
+from common import ROOT
 from chatlines import chat_lines
 from finalize import TITLE_RE
+from setup_book import read_book
 
 # Названия сведены с карточкой на RanobeLIB слово в слово. Расходиться им нельзя:
 # читатель скачивает файл со страницы тайтла, и другое название на обложке книги
-# выглядит как чужая книга. Здесь стояло «4,6 миллиарда лет эволюции» — без
-# «симфонии» и с запятой вместо точки, — а в подзаголовке «4.6 Billion Years of
-# Symphony» вместо «4.6 Billion Year Symphony of Evolution».
-# Значения штампует setup_book.py из BOOK.md.
-BOOK_TITLE = "{{BOOK_TITLE}}"
-BOOK_SUBTITLE = "{{BOOK_ORIG}} · {{BOOK_EN}}"
-# Написание автора сводить с карточкой на RanobeLIB слово в слово.
-BOOK_AUTHOR = "{{BOOK_AUTHOR}}"
+# выглядит как чужая книга. Поэтому всё берётся из BOOK.md при каждом запуске, а
+# не константами здесь: прежние константы пережили смену тайтла, и EPUB новой
+# книги вышел бы с подзаголовком, автором и обложкой прошлой.
+_BOOK = read_book()
+BOOK_TITLE = _BOOK["title"]
+BOOK_SUBTITLE = " · ".join(x for x in (_BOOK["title_cn"], _BOOK["title_en"]) if x)
+# Написание псевдонима — как у автора на карточке RanobeLIB (поле «Автор» в BOOK.md).
+BOOK_AUTHOR = _BOOK["author"]
 BOOK_LANG = "ru"
 BOOK_ID = f"urn:uuid:{uuid.uuid4()}"
-ROOT = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_EPUB_PATTERN = os.path.join(ROOT, "book_ru_{min_idx}-{max_idx}.epub")
-# Обложка: положи cover.jpg рядом со скриптами. Нет файла — книга без обложки.
-COVER_IMAGE_PATH = os.path.join(ROOT, "cover.jpg")
+_FILE_STEM = re.sub(r"[^0-9a-z]+", "_", _BOOK["title_en"].lower()).strip("_") or "book"
+DEFAULT_EPUB_PATTERN = _FILE_STEM + "_ru_{min_idx}-{max_idx}.epub"
+# Обложка — только из папки проекта (поле «Обложка EPUB»): файл с рабочего стола
+# переживает смену тайтла, и в новую книгу молча встала бы обложка прошлой.
+COVER_IMAGE_PATH = os.path.join(ROOT, _BOOK["cover"]) if _BOOK["cover"] else ""
 
 RU_DIR = os.path.join(ROOT, "ru")
 
@@ -160,6 +163,9 @@ def parse_chapter_file(filepath, chapter_num):
     return title, body_paras
 
 def build_epub(max_chapter=None):
+    if not BOOK_TITLE or not BOOK_AUTHOR:
+        raise SystemExit("В BOOK.md не заполнены «Русское» название или «Автор» (SET-ME) — "
+                         "без них EPUB выйдет безымянным. Впиши их как на карточке RanobeLIB.")
     files = sorted(glob.glob(os.path.join(RU_DIR, "chapter_*.txt")))
     # Нумерация берётся из author_numbers — той же, по которой разложена папка
     # ru_by_author и выложены главы на сайте. Считать её здесь заново значило бы
@@ -220,7 +226,13 @@ def build_epub(max_chapter=None):
         zf.writestr("OEBPS/style.css", CSS_CONTENT)
 
         # Check if cover image exists
-        has_cover = os.path.exists(COVER_IMAGE_PATH)
+        has_cover = bool(COVER_IMAGE_PATH) and os.path.exists(COVER_IMAGE_PATH)
+        if has_cover and not COVER_IMAGE_PATH.lower().endswith((".jpg", ".jpeg")):
+            # в манифесте обложка объявлена как image/jpeg
+            print(f"Обложка {COVER_IMAGE_PATH} не JPEG — собираю без обложки.")
+            has_cover = False
+        elif COVER_IMAGE_PATH and not has_cover:
+            print(f"Обложки {COVER_IMAGE_PATH} нет — собираю без обложки (поле «Обложка EPUB» в BOOK.md).")
         if has_cover:
             print(f"Including cover image from {COVER_IMAGE_PATH}")
             with open(COVER_IMAGE_PATH, "rb") as cf:

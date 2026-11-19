@@ -43,7 +43,7 @@ if hasattr(sys.stdout, "reconfigure"):
 REPORT = os.path.join(ROOT, "final_check_report.json")
 
 # Заголовок готовой главы: «Глава 216: …», «Глава 216.1: …» либо служебный.
-# Номер в заголовке обязан совпадать с авторским номером из volume_map.json —
+# Номер в заголовке обязан совпадать с авторским номером из author_numbers —
 # это единственная сверка, связывающая текст главы с тем, под каким номером
 # она уйдёт на сайт и в книгу.
 TITLE_RE = re.compile(r"^Глава\s+(\d+(?:\.\d+)?)\s*[:：]")
@@ -113,11 +113,15 @@ def main():
     excluded = load_excluded()
     src_idx = indexes_in(CHAPTERS_DIR)
     ru_idx = indexes_in(RU_DIR)
-    n_max = max(src_idx | ru_idx)
-    # Разметку считаем сами, а не читаем снимок volume_map.json: его пишет
-    # только publish_ranobelib, и до первой выкладки его попросту нет.
+    n_max = max(src_idx | ru_idx, default=0)
+    if not n_max:
+        raise SystemExit("Нечего проверять: в chapters/ и ru/ нет ни одной главы.")
+    # Карта нумерации — прямо из author_numbers, как в publish_ranobelib.
+    # volume_map.json пишется только побочным эффектом выкладки: до первой
+    # выкладки его нет (провал «нет записи» на каждой главе), после — снимок
+    # может устареть. Файл остаётся снимком для человека, здесь не читается.
     numbering = author_numbers.build()
-    vmap = {str(k): [v[0], v[1]] for k, v in numbering["map"].items()}
+    vmap = {str(k): list(v) for k, v in numbering["map"].items()}
     covered = {str(k) for k in numbering.get("covered", {})}
     dup_claimed = {i: str(b) for i, b, _l, _o in numbering.get("duplicates", [])}
     fixes = None if args.skip_terms else load_fixes()
@@ -143,6 +147,13 @@ def main():
             fail("полнота", "гл.%04d: нет перевода в ru/" % idx)
     for idx in sorted(ru_idx - src_idx):
         fail("полнота", "гл.%04d: перевод без исходника — выдуман целиком" % idx)
+    # Записи каталога без авторского номера — чаще всего не главы, а объявления
+    # автора («完結啦», реклама новой книги). Исключать или переводить, решает
+    # человек через excluded_chapters.json; здесь только напоминание.
+    for idx, why in numbering["unnumbered"]:
+        if idx not in excluded:
+            warn("без номера", "гл.%04d: «%s» — %s; исключить или перевести?"
+                 % (idx, (numbering["titles"].get(idx) or "")[:40], why))
 
     # --- Поглавный проход ---
     checked = 0

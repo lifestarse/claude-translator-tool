@@ -24,21 +24,25 @@
 import argparse
 import os
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import read_text, split_paragraphs
-from publish_ranobelib import API, SITE_ID, SLUG, MANGA_ID, token_or_die
+from common import ROOT, read_text, split_paragraphs
+from publish_ranobelib import API, SITE_ID, SLUG, manga_id, require_site_settings, token_or_die
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-SUMMARY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "title_summary.md")
+SUMMARY_FILE = os.path.join(ROOT, "title_summary.md")
 # Возрастное ограничение сайт требует при каждой правке: без него валидатор
 # отвечает «обязательно для заполнения, когда "Модерация" не указано».
-CAUTION = 4  # 18+, как стоит в карточке
+# Код рейтинга — как в форме тайтла на сайте (у прошлой книги стояло 4 = 18+).
+# Выбирает человек под конкретный тайтл: каждый --apply перезаписывает рейтинг
+# этим значением, поэтому, пока здесь None, скрипт ничего не отправит.
+CAUTION = None  # SET-ME: возрастной рейтинг этого тайтла (или --caution N)
 
 
 def to_doc(paragraphs):
@@ -64,7 +68,7 @@ def flatten(obj, prefix=""):
 
 def put(fields, token):
     body = urllib.parse.urlencode(fields).encode("utf-8")
-    req = urllib.request.Request("%s/manga/%d" % (API, MANGA_ID), data=body, method="PUT")
+    req = urllib.request.Request("%s/manga/%d" % (API, manga_id()), data=body, method="PUT")
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("Site-Id", SITE_ID)
     req.add_header("Accept", "application/json")
@@ -97,11 +101,14 @@ def main():
     ap = argparse.ArgumentParser(description="Обновить описание тайтла")
     ap.add_argument("--apply", action="store_true", help="отправить (без флага — показать)")
     ap.add_argument("--file", default=SUMMARY_FILE)
+    ap.add_argument("--caution", type=int, default=CAUTION,
+                    help="код возрастного рейтинга (по умолчанию константа CAUTION)")
     args = ap.parse_args()
 
     if not os.path.exists(args.file):
-        raise SystemExit("Нет файла описания %s — напиши описание тайтла "
-                         "(абзацы через пустую строку) и запусти снова." % args.file)
+        raise SystemExit("Нет файла с описанием: %s\n"
+                         "Положи текст описания туда (абзацы через пустую строку) "
+                         "или укажи другой файл через --file." % args.file)
     paras = split_paragraphs(read_text(args.file))
     print("Абзацев: %d, символов: %d" % (len(paras), sum(len(p) for p in paras)))
     print("")
@@ -113,8 +120,13 @@ def main():
         print("Показ без отправки. Отправить — тот же вызов с флагом --apply.")
         return
 
+    require_site_settings(team=False)
+    if args.caution is None:
+        raise SystemExit("Возрастной рейтинг не задан (CAUTION = None, SET-ME в update_title.py).\n"
+                         "Сайт перезапишет им карточку при каждой правке описания, поэтому\n"
+                         "угадывать его скрипт не будет: впиши код в CAUTION или передай --caution N.")
     token = token_or_die()
-    code, body = put([("caution", CAUTION)] + flatten(to_doc(paras), "summary"), token)
+    code, body = put([("caution", args.caution)] + flatten(to_doc(paras), "summary"), token)
     print("Ответ сайта: %s %s" % (code, body[:120]))
 
     # Код ответа ничего не доказывает — сверяемся с тем, что реально лежит.

@@ -48,6 +48,8 @@ JUDGED_DIR = os.path.join(ROOT, "glossary_judged")
 GLOSSARY_V2 = os.path.join(ROOT, "glossary_v2.json")
 ACCUMULATED = os.path.join(ROOT, "glossary_accumulated.json")
 STYLE_REF = "glossary_style_reference.md"
+# Сколько уже принятых записей показать судье как образец, если файла-образца нет.
+STYLE_SAMPLE = 25
 
 # Конструкции именования («назвали X», 叫做X, 'X'라고 불렀다) и стоп-слова
 # зависят от языка оригинала и живут в lang.py. Захват в кавычках точнее:
@@ -58,13 +60,96 @@ CONTEXT = 60
 MAX_CONTEXTS = 2
 
 
+REQUIRED = ("cn", "ru", "gender", "category")
+
+
 def load_known():
+    """cn, по которым решение уже есть: принятые, отклонённые и спорные.
+
+    Раньше сюда шли только принятые. Отклонённый или конфликтный термин
+    возвращался к судье в каждом следующем окне и после каждого рестарта:
+    повторный суд за деньги, а второй вердикт с другим ru превращал термин
+    в конфликт, merge выкидывал его, и в следующей волне его судили снова.
+    Вердикты читаются прямо из glossary_judged/, а не только из v2: если
+    merge не дошёл до записи, решение судьи всё равно уже принято.
+    Кривой принятый вердикт (без ru или рода) решением не считается —
+    такой термин судья увидит ещё раз.
+    """
     known = set()
     for path in (GLOSSARY_V2, ACCUMULATED):
         data = load_json(path, {}) or {}
         for e in data.get("glossary", []):
             known.add(e["cn"])
+    v2 = load_json(GLOSSARY_V2, {}) or {}
+    for e in (v2.get("rejected") or []) + (v2.get("conflicts") or []):
+        if isinstance(e, dict) and e.get("cn"):
+            known.add(e["cn"])
+    if os.path.isdir(JUDGED_DIR):
+        for name in os.listdir(JUDGED_DIR):
+            if not name.endswith(".json") or name.startswith("arbitration_"):
+                continue
+            data = load_json(os.path.join(JUDGED_DIR, name))
+            items = data.get("verdicts", []) if isinstance(data, dict) else data
+            for v in items if isinstance(items, list) else []:
+                if not isinstance(v, dict) or not isinstance(v.get("cn"), str):
+                    continue
+                if v.get("accept") and not all(
+                        isinstance(v.get(f), str) and v[f].strip() for f in REQUIRED):
+                    continue
+                known.add(v["cn"])
     return known
+
+
+def translator_leftovers(known):
+    """Имена от переводчиков, которые накопитель не принял сам из-за разброса.
+
+    glossary_accumulate.py не выбрасывает такие имена (сквозной персонаж
+    живёт дольше любого порога), а откладывает в to_judge. Решает судья.
+    """
+    acc = load_json(ACCUMULATED, {}) or {}
+    out = collections.OrderedDict()
+    for e in acc.get("to_judge") or []:
+        cn = e.get("cn") if isinstance(e, dict) else None
+        if not cn or cn in known:
+            continue
+        rec = {"cn": cn, "quoted": False, "chapters": [], "contexts": [],
+               "proposed_ru": e.get("ru", ""),
+               "origin": "предложено переводчиком, накопитель отложил по разбросу"}
+        idx = e.get("named_in")
+        if isinstance(idx, int) and os.path.exists(chapter_path(idx)):
+            text = read_text(chapter_path(idx))
+            k = text.find(cn)
+            if k >= 0:
+                rec["chapters"].append(idx)
+                rec["contexts"].append("гл.%d: …%s…" % (idx, text[
+                    max(0, k - CONTEXT):k + len(cn) + CONTEXT].replace("\n", " ").strip()))
+        out[cn] = rec
+    return out
+
+
+def style_step(n):
+    """Пункт задания про образец стиля, или пусто.
+
+    Файл-образец есть не у каждого тайтла: у нового его нет, и судья упирался
+    в отсутствующий файл на первом же шаге. Тогда образцом служат уже принятые
+    записи глоссария прямо в задании; при пустом глоссарии пункта нет вовсе.
+    Возвращает (текст пункта, сдвиг нумерации следующих пунктов).
+    """
+    if os.path.exists(os.path.join(ROOT, STYLE_REF)):
+        return "%d. Прочитай `%s` — образец манеры принятых терминов, держись её.\n" % (
+            n, STYLE_REF), 1
+    sample = style_sample()
+    if not sample:
+        return "", 0
+    return ("%d. Держись манеры уже принятых терминов:\n%s\n" % (n, sample)), 1
+
+
+def style_sample():
+    data = load_json(GLOSSARY_V2, {}) or {}
+    rows = [e for e in data.get("glossary", []) if e.get("cn") and e.get("ru")]
+    return "\n".join("   - %s → %s%s" % (
+        e["cn"], e["ru"], " (%s)" % e["gender"] if e.get("gender") else "")
+        for e in rows[:STYLE_SAMPLE])
 
 
 def taken_names():
@@ -131,16 +216,16 @@ JUDGE_TEMPLATE = """# Задание: вынести вердикт по тер�
 
 ## Что сделать
 
-1. Прочитай `{style_ref}` — там правила и принятые решения, держись их манеры.
-2. Прочитай `{batch_file}` — список кандидатов с контекстами.
-3. По каждому вынеси вердикт.
-4. Запиши результат в `{out_file}` в формате:
+{style_step}{n1}. Прочитай `{batch_file}` — список кандидатов с контекстами.
+{n2}. По каждому вынеси вердикт.
+{n3}. Запиши результат в `{out_file}` в формате:
 
 ```json
 {{"verdicts": [
-  {{"cn": "光導爆彈", "accept": true, "ru": "Светонаводящаяся бомба",
-    "gender": "Она / Её", "category": "Оружие", "description": "…"}},
-  {{"cn": "光合作用", "accept": false, "reason": "обычная лексика: фотосинтез"}}
+  {{"cn": "<термин>", "accept": true, "ru": "<русское имя>",
+    "gender": "Она / Её", "category": "<техника / место / организация / персонаж / …>",
+    "description": "…"}},
+  {{"cn": "醫學", "accept": false, "reason": "обычная лексика: медицина"}}
 ]}}
 ```
 
@@ -149,10 +234,9 @@ JUDGE_TEMPLATE = """# Задание: вынести вердикт по тер�
 ## Правила
 
 **Отклоняй обычную лексику.** Конструкция именования ловит не только коинажи:
-`光合作用` «фотосинтез», `共生` «симбиоз», `壓力` «давление`, `森林` «лес» —
-это словарные слова, автор просто вводит понятие для героя, у которого нет
-языка. Такому в глоссарии не место: переводчик и сам знает эти слова, а лишняя
-запись только раздувает задание. Признак коинажа — у слова **нет** готового
+`醫學` «медицина», `希望` «надежда», `激動` «волнение» — это словарные
+слова, автор просто называет понятие. Такому в глоссарии не место: переводчик
+и сам знает эти слова, а лишняя запись только раздувает задание. Признак коинажа — у слова **нет** готового
 русского соответствия, и переводчики разойдутся в вариантах.
 
 **Частота — обратный признак.** У каждого кандидата указано, в скольких главах
@@ -164,8 +248,11 @@ JUDGE_TEMPLATE = """# Задание: вынести вердикт по тер�
 
 **Род обязателен** для принятых — по нему согласуются прилагательные и глаголы.
 
-**Имя должно быть коротким.** Термин встретится сотни раз; подстрочник вроде
-«Щупальце глазного яблока» в прозе не читается. Один-два слова.
+**Имя должно быть коротким.** Термин встретится сотни раз; подстрочник в четыре
+слова в прозе не читается. Один-два слова.
+
+**Кандидаты с `proposed_ru`** пришли от переводчиков: это имя уже стоит в готовых
+главах. Если оно годится — бери его, иначе главы придётся править.
 
 **Не занимай уже занятые имена.** Ниже список русских названий, которые уже
 раздали другим терминам. Если твой кандидат просится в одно из них — придумай
@@ -183,6 +270,16 @@ def main():
     args = ap.parse_args()
 
     lo, hi = args.range
+    tag = "wave_%04d_%04d" % (lo, hi)
+    task_file = os.path.join(BATCH_DIR, "judge_" + tag + ".md")
+    batch_file = os.path.join(BATCH_DIR, tag + ".json")
+    # autorun решает, звать ли судью, по одному наличию judge_<tag>.md. Задание
+    # от прошлого запуска на том же окне иначе пережило бы выход «новых нет»
+    # ниже, и судья пересудил бы старый список, перезаписав свой же вердикт.
+    if not args.dry_run:
+        for stale in (task_file, batch_file):
+            if os.path.exists(stale):
+                os.remove(stale)
     known = load_known()
     print("[+] В глоссарии уже: %d терминов" % len(known))
 
@@ -191,6 +288,11 @@ def main():
 
     fresh = {k: v for k, v in found.items() if k not in known}
     print("    из них новых: %d" % len(fresh))
+    leftovers = translator_leftovers(known)
+    for cn, rec in leftovers.items():
+        fresh.setdefault(cn, rec)
+    if leftovers:
+        print("    + отложено накопителем (от переводчиков): %d" % len(leftovers))
     if not fresh:
         print("Новых терминов в диапазоне нет — можно переводить как есть.")
         return
@@ -204,7 +306,7 @@ def main():
     for term, rec in fresh.items():
         rec["docfreq"] = df.get(term, 0)
         rec["spread"] = "%.1f%% глав книги" % (100.0 * rec["docfreq"] / max(total, 1))
-        if rec["docfreq"] < args.min_docfreq:
+        if rec["docfreq"] < args.min_docfreq and not rec.get("proposed_ru"):
             thin.append(rec)
             continue
         cands.append(rec)
@@ -235,21 +337,28 @@ def main():
 
     os.makedirs(BATCH_DIR, exist_ok=True)
     os.makedirs(JUDGED_DIR, exist_ok=True)
-    tag = "wave_%04d_%04d" % (lo, hi)
-    batch_file = os.path.join(BATCH_DIR, tag + ".json")
     save_json(batch_file, {
         "range": [lo, hi],
         "note": "Термины, которые книга вводит конструкциями именования в этом диапазоне.",
         "candidates": cands,
     })
 
+    # Вердикт прошлого суда по этому же окну не перезаписывается: load_known
+    # уже исключил решённое, и новый список — только добавка (рестарт окна,
+    # отложенные накопителем). Записанный поверх файл стёр бы прежние вердикты,
+    # а merge собирает v2 из них заново — принятые термины пропали бы из v2.
+    out_name, n = tag, 1
+    while os.path.exists(os.path.join(JUDGED_DIR, out_name + ".json")):
+        n += 1
+        out_name = "%s_r%d" % (tag, n)
+
     taken = taken_names()
-    task_file = os.path.join(BATCH_DIR, "judge_" + tag + ".md")
+    step, shift = style_step(1)
     write_text(task_file, JUDGE_TEMPLATE.format(
         lo=lo, hi=hi,
-        style_ref=STYLE_REF,
+        style_step=step, n1=1 + shift, n2=2 + shift, n3=3 + shift,
         batch_file="glossary_batches/%s.json" % tag,
-        out_file="glossary_judged/%s.json" % tag,
+        out_file="glossary_judged/%s.json" % out_name,
         taken="\n".join("- " + n for n in taken),
     ))
 

@@ -23,8 +23,8 @@ have, so a kill at any moment loses at most one chapter.
 по непересекающимся диапазонам глав; у каждого свои state/log/usage файлы,
 а записи в общие файлы глоссария сериализуются файловым замком. Гонка
 именований, ради которой прогон сделан последовательным, остаётся возможной
-на границах диапазонов, но она смягчена: глоссарий уже зрелый (2000+ глав),
-prewave судит коинажи каждого окна до перевода, а спорный термин при слиянии
+на границах диапазонов, но она смягчена: параллелить стоит только на зрелом
+глоссарии (первые сотни глав — последовательно), prewave судит коинажи каждого окна до перевода, а спорный термин при слиянии
 не выбирается автоматически, а остаётся вне глоссария (pending_conflicts.log).
 
 Progress and failures: autorun.log, autorun_state.json.
@@ -74,6 +74,14 @@ MANIFEST = os.path.join(ROOT, "manifest.json")
 FIXES_DIR = os.path.join(ROOT, "fixes")
 
 CHAPTER_TIMEOUT = 900          # a chapter takes 1-4 min; 15 is a hang, not slowness
+# Судья окна в 100 глав — не глава: на пустом глоссарии новой книги первое окно
+# несёт больше всего кандидатов, и под главным лимитом в 15 минут его убивали
+# и запускали с нуля по кругу. Свой лимит, с запасом.
+JUDGE_TIMEOUT = 3600
+# Таймаут — не обрыв сети. Сеть повторяется бесконечно, а вызов, который
+# упирается в лимит времени раз за разом, сам не вылечится: после стольких
+# таймаутов подряд он считается отказом и идёт по обычной лестнице отказов.
+MAX_TIMEOUTS = 3
 
 # When a chapter fails acceptance three times, the loop below would otherwise
 # retry it forever at ~27k tokens a go -- chapter 629 burned an hour of the run
@@ -94,6 +102,12 @@ RATE_PATTERNS = (
     "429", "too many requests", "quota", "insufficient_quota",
     "overloaded", "capacity", "server_overloaded",
 )
+# Незалогиненный CLI отвечает за 0 токенов, и spent_nothing принимал это за
+# обрыв сети: прогон молча крутился бесконечно. Ждать тут нечего — нужен человек.
+AUTH_PATTERNS = (
+    "not logged in", "please run /login", "invalid api key", "authentication_error",
+    "oauth token has expired", "credit balance is too low",
+)
 NETWORK_PATTERNS = (
     "econnreset", "etimedout", "enotfound", "eai_again", "econnrefused",
     "socket hang up", "fetch failed", "network error", "timed out",
@@ -109,7 +123,8 @@ NETWORK_PATTERNS = (
 
 API_HOST = "api.anthropic.com"
 
-RESET_CLOCK_RE = re.compile(r"resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)?", re.I)
+# Минуты необязательны: CLI пишет и «resets 5:20am», и «resets 3am».
+RESET_CLOCK_RE = re.compile(r"resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", re.I)
 RESET_EPOCH_RE = re.compile(r"limit reached\|(\d{9,13})")
 
 
@@ -174,13 +189,39 @@ def log(msg):
         fh.write(line + "\n")
 
 
+def set_aside_chapters(state):
+    """Главы, на которых инженер выбрал все попытки, а перевода так и нет.
+
+    Выводится из state["fixer"] при каждом чтении, а не копится отдельным
+    списком: раньше set_aside только читался и никогда не писался, и --status
+    с пультом всегда показывали «нет», пока глава часами висела в STUCK_SLEEP.
+    Производный список не может разойтись с фактом и не требует чистки.
+    """
+    out = []
+    for key, rec in (state.get("fixer") or {}).items():
+        try:
+            idx = int(key)
+        except ValueError:
+            continue
+        runs = rec.get("runs", 0) if isinstance(rec, dict) else 0
+        if runs >= MAX_FIXER_RUNS and not os.path.exists(ru_path(idx)):
+            out.append(idx)
+    return sorted(out)
+
+
 def load_state():
+    state = None
     if os.path.exists(STATE_FILE):
         try:
-            return json.loads(read_text(STATE_FILE))
+            state = json.loads(read_text(STATE_FILE))
         except ValueError:
             log("[!] autorun_state.json не разобрался, начинаю с чистого состояния")
-    return {"attempts": {}, "done": [], "set_aside": [], "started": None}
+    if not isinstance(state, dict):
+        state = {"attempts": {}, "done": [], "started": None}
+    # Пульт (config_ui) читает state["set_aside"] напрямую — поэтому список
+    # пересчитывается здесь, на чтении, а не в одном только --status.
+    state["set_aside"] = set_aside_chapters(state)
+    return state
 
 
 def save_state(state):
@@ -320,6 +361,23 @@ def spent_nothing(data):
     return spent == 0 and not (data.get("total_cost_usd") or 0)
 
 
+def has_pattern(blob, patterns):
+    """Есть ли в тексте хоть один шаблон.
+
+    Числовые коды (429, 502…) ищутся только как отдельное число, остальное —
+    подстрокой. Та же ловушка, что с конвертом ниже, только в stderr: «request
+    timed out after 74293 ms» содержит «429», и обрыв сети читался как лимит —
+    с паузой 10-30 минут вместо нескольких секунд.
+    """
+    for p in patterns:
+        if p.isdigit():
+            if re.search(r"(?<!\d)%s(?!\d)" % p, blob):
+                return True
+        elif p in blob:
+            return True
+    return False
+
+
 def classify(stdout, stderr, rc):
     """ok / ratelimit / network / fail.
 
@@ -345,9 +403,11 @@ def classify(stdout, stderr, rc):
         parts.append(stdout or "")
     blob = " ".join(parts).lower()
 
-    if any(p in blob for p in RATE_PATTERNS):
+    if has_pattern(blob, AUTH_PATTERNS):
+        return "auth"
+    if has_pattern(blob, RATE_PATTERNS):
         return "ratelimit"
-    if any(p in blob for p in NETWORK_PATTERNS):
+    if has_pattern(blob, NETWORK_PATTERNS):
         return "network"
     if data is not None and spent_nothing(data):
         return "network"
@@ -371,8 +431,9 @@ def seconds_until_reset(text):
             return delay + 120
 
     m = RESET_CLOCK_RE.search(text or "")
-    if m:
-        hour, minute, ampm = int(m.group(1)), int(m.group(2)), (m.group(3) or "").lower()
+    # Голое «resets 5» без минут и без am/pm — не время на часах, а что угодно.
+    if m and (m.group(2) or m.group(3)):
+        hour, minute, ampm = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
         if ampm == "pm" and hour != 12:
             hour += 12
         elif ampm == "am" and hour == 12:
@@ -402,7 +463,7 @@ def sleep_noisily(seconds, why):
             log("    ... ещё %d мин" % round(left / 60))
 
 
-def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet", effort=None):
+def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="claude-opus-5-5", effort=None):
     """Run one headless agent, waiting out throttling for as long as it takes.
 
     Rate limits retry forever by design -- the whole point of the driver is that
@@ -424,17 +485,31 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet", e
             out = (proc.stdout or "") + "\n" + (proc.stderr or "")
             kind = classify(proc.stdout, proc.stderr, proc.returncode)
         except subprocess.TimeoutExpired:
-            # Таймаут — зависание, а не обрыв связи: бесконечно повторять его
-            # нельзя, иначе одна вечно виснущая глава держит слот навсегда.
-            timeouts += 1
-            if timeouts >= 3:
-                return False, "таймаут %d раза подряд" % timeouts
-            out, kind = "", "network"
+            out, kind = "", "timeout"
         except OSError as exc:
             out, kind = str(exc), "network"
 
+        if kind == "timeout":
+            # Раньше это была ветка network — бесконечный повтор без счётчика.
+            # Вызов, который стабильно не укладывается в лимит, крутился так
+            # всю ночь и не доходил ни до отказа, ни до инженера.
+            timeouts += 1
+            log("    [!] %s: таймаут %d с (%d из %d)"
+                % (tag or agent, timeout, timeouts, MAX_TIMEOUTS))
+            if timeouts >= MAX_TIMEOUTS:
+                return False, "таймаут %d раз подряд по %d с" % (timeouts, timeout)
+            wait_for_internet()
+            continue
+
         if kind == "ok":
             return True, parse_result(proc.stdout, tag)
+
+        if kind == "auth":
+            msg = error_text(proc.stdout, out).strip()[:200]
+            log("[!] CLI claude не авторизован: %s" % msg)
+            raise SystemExit(
+                "Прогон остановлен: %s\nЗалогинься в консольном claude (запусти `claude`, "
+                "затем /login) и перезапусти autorun.py — работа не потеряна." % msg)
 
         if kind == "ratelimit":
             rate_waits += 1
@@ -452,6 +527,9 @@ def run_claude(prompt, agent, timeout=CHAPTER_TIMEOUT, tag="", model="sonnet", e
             # Unbounded on purpose. A chapter must never be abandoned because
             # the link went down; the driver simply waits for it to come back.
             net_waits += 1
+            if net_waits == 1 or net_waits % 10 == 0:
+                log("    [!] %s: сбой связи с API (%d подряд): %s"
+                    % (tag or agent, net_waits, " ".join(out.split())[:150]))
             wait_for_internet()
             time.sleep(min(5 * net_waits, 60))   # let the endpoint settle
             continue
@@ -475,18 +553,12 @@ def run_py(script, *args, allow_fail=False):
 
 def pending_chapters():
     """Untranslated chapters in reading order, minus the ones set aside."""
-    order = []
-    if os.path.exists(MANIFEST):
-        try:
-            data = json.loads(read_text(MANIFEST))
-            order = [e["index"] for e in data.get("entries", []) if e.get("downloaded")]
-        except (ValueError, KeyError):
-            order = []
-    if not order:
-        order = sorted(
-            int(f[8:12]) for f in os.listdir(os.path.join(ROOT, "chapters"))
-            if f.startswith("chapter_") and f.endswith(".txt")
-        )
+    # По факту файлов в chapters/, а не по снимку manifest.json: снимок пишется
+    # в конце скачивания и во время докачки видит лишь то, что было до неё.
+    order = sorted(
+        int(f[8:12]) for f in os.listdir(os.path.join(ROOT, "chapters"))
+        if re.match(r"chapter_\d{4}\.txt$", f)
+    )
     excluded = load_excluded()
     return [i for i in order if i not in excluded and not os.path.exists(ru_path(i))]
 
@@ -578,7 +650,7 @@ def call_fixer(idx, reasons, prior_verdict=None, model="opus"):
     """Escalate a jammed chapter to the engineer. Returns its verdict or None.
 
     Runs on opus deliberately: this is the one step in the pipeline that reasons
-    about the pipeline itself, and it edits shared rules that touch all 4885
+    about the pipeline itself, and it edits shared rules that touch all the
     chapters. The two jams seen so far both needed a corpus-wide regex written
     without breaking real prose -- not a job for the cheap tier.
     """
@@ -641,7 +713,7 @@ def update_glossary(report_line, idx):
                 fh.write("--- после гл.%04d\n%s\n" % (idx, out[-1500:]))
 
 
-def do_prewave(lo, hi, model="sonnet", effort=None):
+def do_prewave(lo, hi, model="claude-opus-5-5", effort=None):
     log("[этап] термины диапазона %d-%d до перевода" % (lo, hi))
     rc, out = run_py("prewave_terms.py", "--range", str(lo), str(hi), allow_fail=True)
     tag = "wave_%04d_%04d" % (lo, hi)
@@ -651,7 +723,7 @@ def do_prewave(lo, hi, model="sonnet", effort=None):
         return
     ok, report = run_claude(
         "Файл задания: glossary_batches/judge_%s.md" % tag,
-        agent="judge", tag="judge", model=model, effort=effort)
+        agent="judge", timeout=JUDGE_TIMEOUT, tag="judge", model=model, effort=effort)
     log("    судья: %s" % (report.replace("\n", " ")[:160] if ok else "НЕ СПРАВИЛСЯ"))
     with GlossaryLock():
         run_py("glossary_merge.py", allow_fail=True)
@@ -702,10 +774,13 @@ def main():
     # осознанно, а не помнить о включении.
     ap.add_argument("--no-prewave", dest="prewave", action="store_false",
                     default=True, help="не судить коинажи диапазона перед переводом")
+    ap.add_argument("--terms-only", action="store_true",
+                    help="только суд терминов окнами --wave по оригиналу (весь тайтл "
+                         "или --range), без перевода")
     ap.add_argument("--wave", type=int, default=100, metavar="N",
                     help="судить термины окнами по N глав (по умолчанию 100)")
-    ap.add_argument("--model", default="sonnet",
-                    help="модель для переводчика и судьи терминов (по умолчанию sonnet)")
+    ap.add_argument("--model", default="claude-opus-5-5",
+                    help="модель для переводчика и судьи терминов (по умолчанию claude-opus-5-5: в слепом сравнении гл.1 обошёл sonnet по точности и стилю, ~$0.36 за главу против ~$0.12)")
     ap.add_argument("--judge-model",
                     help="модель судьи терминов (по умолчанию — как --model)")
     ap.add_argument("--audit-every", type=int, default=25, metavar="N",
@@ -770,6 +845,24 @@ def main():
                      u["usd_per_chapter"] * len(todo)))
         return
 
+    if args.terms_only:
+        # Суд по оригиналу: кандидатов prewave_terms собирает из chapters/, так
+        # что глоссарий всей книги можно вынести до первой переведённой главы.
+        # Окна идут строго подряд — вердикты окна вливаются в глоссарий до суда
+        # следующего, и судья видит уже принятые написания.
+        CLAUDE = find_claude()
+        lo, hi = args.range or (1, max(
+            int(f[8:12]) for f in os.listdir(os.path.join(ROOT, "chapters"))
+            if re.match(r"chapter_\d{4}\.txt$", f)))
+        log("=" * 62)
+        log("Суд терминов без перевода: главы %d-%d окнами по %d (%s)"
+            % (lo, hi, args.wave, args.model))
+        log("=" * 62)
+        for w in range(lo, hi + 1, args.wave):
+            do_prewave(w, min(w + args.wave - 1, hi), args.model)
+        log("Суд терминов закончен. Дальше: python autorun.py")
+        return
+
     if not queue:
         log("Непереведённых глав не осталось.")
         return
@@ -779,6 +872,10 @@ def main():
     if blockers:
         raise SystemExit("Провайдер модели не готов:\n  " + "\n  ".join(blockers))
     state["started"] = dt.datetime.now().isoformat(timespec="seconds")
+    # Границы участка — в собственный state слота: по ним parallel_status
+    # находит прогоны сам. Общий файл с границами писали бы 16 процессов разом.
+    if args.range:
+        state["range"] = list(args.range)
     save_state(state)
 
     log("=" * 62)
@@ -831,12 +928,15 @@ def main():
                 agent="translator", tag="%04d" % idx, model=args.model,
                 effort=args.effort)
             if not ok:
+                # Отказ агента (сбой CLI, таймауты) — такая же неудачная
+                # попытка, как брак на приёмке, и считается в reasons. Раньше
+                # здесь был голый continue: глава, на которой агент падает
+                # каждый раз, крутилась вечно и не доходила до инженера.
                 log("    агент не справился: %s" % short(report, 200))
                 wait_for_internet()
-                sleep_noisily(min(30 * attempts, 300), "повтор той же главы")
-                continue
-
-            good, why = accept_chapter(idx)
+                good, why = False, "агент не справился: %s" % short(report, 150)
+            else:
+                good, why = accept_chapter(idx)
             if not good:
                 reject_chapter(idx, why)
                 reasons.append(why)

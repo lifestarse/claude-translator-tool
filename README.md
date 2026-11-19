@@ -21,7 +21,7 @@
 
 | # | Стадия | Команды |
 |---|--------|---------|
-| 1 | Главы → `chapters/` | из файлов: `python import_text.py book.txt` / `папка/` / `book.epub` (любой язык); с сайта: `python scraper.py` (проверь спам-семейства сайта в `common.py: SPAM_MARKERS/SPAM_SPANS` — у нового сайта будут свои!) |
+| 1 | Главы → `chapters/` | из файлов: `python import_text.py book.txt` / `папка/` / `book.epub` (любой язык); с сайта: `python scraper.py`, затем `python clean_corpus.py` ДО начала перевода (проверь спам-семейства сайта в `common.py: SPAM_MARKERS/SPAM_SPANS` — у нового сайта будут свои!) |
 | 2 | Задания на перевод → `batches/` | `python build_batches.py` |
 | 3 | Перевод (флот агентов translator) | `python autorun.py` — один участок; параллельно: `--range LO HI --slot NN` на каждый экземпляр, статус: `python parallel_status.py --watch`. Модель и усилие: `--model claude-opus-5-5 --effort medium`, судья терминов на своей модели: `--judge-model ...` |
 | 4 | Аудит корпуса | `python verify.py` — структурная приёмка каждой главы (абзацы 1:1, объём, иероглифы, маркеры) |
@@ -35,7 +35,7 @@
 | 8 | Финальная сквозная проверка | `python final_check.py` — полнота, структура, спам, канон, глоссарные зонды, нумерация, дубликаты. Ноль провалов и ноль предупреждений = корпус готов |
 | 9 | Выкладка | `publish_ranobelib.py --publish [--range LO HI]`; синк правок: `--sync --publish`; капельная выкладка: `passive-update.py --every N` |
 | 9а | Публичная читалка | `python build_site.py` — сайт: страница книги, главы (темы, шрифт, ширина, оглавление, прогресс, «продолжить»), файлы EPUB/FB2/TXT/HTML/PDF. Настройки — раздел «Публичная читалка» в `BOOK.md`, обложка — `cover.jpg`. Шрифты для чтения лежат в `fonts/` и раздаются с самого сайта: Literata (по умолчанию), PT Serif, Lora, Merriweather, Roboto, Open Sans, PT Sans, Nunito Sans плюс «Системный». Это woff2 с латиницей и кириллицей и `fonts.css` с `@font-face`. Браузер качает только выбранный шрифт. Лицензии OFL/Apache — `fonts/LICENSES.txt`. Ветка [сообщений], которую источник склеил в один абзац (чат, комментарии с ответами «└», системные окна), выводится построчно во всех форматах — `chatlines.py`; сам перевод при этом не меняется, выравнивание 1:1 с оригиналом цело. `autorun.py` пересобирает после каждой принятой главы |
-| 10 | Карта мира (опционально) | скелет co-occurrence + агенты glossmap → ревизия glossmapcheck → `build_reader_map.py` → страница с поиском и связями |
+| 10 | Карта мира (опционально) | скелет co-occurrence + агенты glossmap → ревизия glossmapcheck → `build_reader_map.py` → страница с поиском и связями (сборщика скелета/заданий в репозитории нет — драйверы подскажут, чего не хватает) |
 | 11 | EPUB (опционально) | `python build_epub.py` |
 
 ## Уроки, оплаченные кровью (зашиты в код, не выключай)
@@ -103,7 +103,7 @@
   qcfix, fixer, termfix, termfix-batch, glossfix, glossjudge, glossmap,
   glossmapcheck, termaudit, glossaudit, namefix. Книго-контекст штампуется из BOOK.md.
 - Драйверы флотов (`*_driver.py`) — атомарные claim-файлы, поглавная
-  приёмка, `откат битого к снимку, журнал расходов `termfix_usage.jsonl`.
+  приёмка, откат битого из снимка до агента (ru/ в .gitignore — git его не вернёт), журнал расходов `termfix_usage.jsonl`.
 - `config_ui.py` — пульт (streamlit), `launcher_console.py` — диспетчер задач.
 
 ## Язык оригинала

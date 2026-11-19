@@ -385,7 +385,7 @@ class Profile(object):
         if self.code == "zh":
             cjk = "[%s]" % HAN_CORE
             return [
-                (re.compile(NAMING_ZH + r"\s*[‘'\"「『](" + cjk + r"{2,8})[’'\"」』]"), True),
+                (re.compile(NAMING_ZH + r"\s*[‘“'\"「『](" + cjk + r"{2,8})[’”'\"」』]"), True),
                 (re.compile(NAMING_ZH + r"\s*(" + cjk + r"{2,6})"), False),
             ]
         if self.code == "ja":

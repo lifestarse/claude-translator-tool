@@ -22,12 +22,15 @@ import re
 import sys
 
 from common import (
+    CATALOG_FILE,
+    CHAPTERS_DIR,
     RU_DIR,
     ROOT,
     chapter_path,
     load_excluded,
     load_glossary,
     load_json,
+    parse_chapter_numbers,
     read_text,
     relevant_terms,
     ru_path,
@@ -41,7 +44,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 BATCH_DIR = os.path.join(ROOT, "batches")
 GLOSSARY_V2 = os.path.join(ROOT, "glossary_v2.json")
-MANIFEST = os.path.join(ROOT, "manifest.json")
+# Тот же порог, что scraper.MIN_VALID_PARAGRAPHS: файл короче — не глава, а
+# недокачанная или пустая страница, scraper её перекачает.
+MIN_VALID_PARAGRAPHS = 3
 
 # The translation rules live in the translator agent's system prompt
 # (.claude/agents/translator.md), not here. Repeating them in every task file
@@ -103,12 +108,12 @@ def normalise(text):
 
 
 def load_terms():
-    """glossary_v2.json if the agent-built glossary exists, else the curated 55."""
+    """glossary_v2.json if the agent-built glossary exists, else the curated glossary.json."""
     v2 = load_json(GLOSSARY_V2)
     if v2 and v2.get("glossary"):
         return v2["glossary"], v2.get("pronoun_rules", {}), "glossary_v2.json"
     curated, _auto, rules = load_glossary()
-    return curated, rules, "glossary.json (только 55 выверенных)"
+    return curated, rules, "glossary.json (только выверенные вручную)"
 
 
 def glossary_block(terms, pronoun_rules):
@@ -131,20 +136,58 @@ def glossary_block(terms, pronoun_rules):
     return "\n".join(lines)
 
 
+def is_ready_source(idx):
+    try:
+        return len(split_paragraphs(read_text(chapter_path(idx)))) >= MIN_VALID_PARAGRAPHS
+    except OSError:
+        return False
+
+
+def warn_non_chapters(order, excluded):
+    """Записи каталога без номера в заголовке, которых нет в excluded_chapters.json.
+
+    Сами они из очереди не выкидываются: у прошлой книги без номера шёл и
+    «序章», настоящий текст. Но объявление автора («上架感言», реклама новой
+    книги) в очереди — почти наверняка ошибка, и сказать об этом надо вслух.
+    """
+    titles = {e["index"]: e.get("title", "")
+              for e in (load_json(CATALOG_FILE, []) or []) if isinstance(e, dict)}
+    for i in order:
+        if i in excluded or i not in titles:
+            continue
+        if not parse_chapter_numbers(titles[i]):
+            print("    [!] гл.%04d «%s» — без номера главы, но не в excluded_chapters.json;"
+                  " если это объявление автора, внеси её туда" % (i, titles[i][:40]))
+
+
 def pending_chapters(limit):
-    """Untranslated chapters in reading order (catalog position), minus exclusions."""
-    manifest = load_json(MANIFEST)
-    if manifest and manifest.get("entries"):
-        order = [e["index"] for e in manifest["entries"] if e.get("downloaded")]
-    else:
-        order = sorted(
-            int(f[8:-4])
-            for f in os.listdir(os.path.join(ROOT, "chapters"))
-            if f.startswith("chapter_") and f.endswith(".txt")
-        )
+    """Untranslated chapters in reading order (catalog position), minus exclusions.
+
+    Очередь строится по файлам в chapters/, а не по manifest.json. Снимок
+    manifest пересобирается только в scraper.verify(), то есть в конце полного
+    прогона: пока скачивание идёт или после прерванного прогона он видел 2
+    главы из сотен скачанных, и сборка тихо отвечала «непереведённых не
+    осталось». Индекс файла и есть позиция в каталоге, так что порядок чтения
+    — это просто порядок индексов.
+    """
+    order = sorted(
+        int(f[8:-4])
+        for f in os.listdir(CHAPTERS_DIR)
+        if re.fullmatch(r"chapter_\d{4}\.txt", f)
+    )
     excluded = load_excluded()
-    todo = [i for i in order if i not in excluded and not os.path.exists(ru_path(i))]
-    return todo[:limit] if limit else todo
+    candidates = [i for i in order if i not in excluded and not os.path.exists(ru_path(i))]
+    todo = []
+    for i in candidates:
+        if limit and len(todo) >= limit:
+            break
+        if is_ready_source(i):
+            todo.append(i)
+        else:
+            print("    гл.%04d — исходник короче %d абзацев (недокачан?), пропускаю"
+                  % (i, MIN_VALID_PARAGRAPHS))
+    warn_non_chapters(todo, excluded)
+    return todo
 
 
 def main():
@@ -165,8 +208,10 @@ def main():
     os.makedirs(BATCH_DIR, exist_ok=True)
     os.makedirs(RU_DIR, exist_ok=True)
     if args.clean:
+        # Только то, что пишет сама эта сборка. .gitkeep отслеживается git, а
+        # подкаталог os.remove ронял до того, как собрано хоть одно задание.
         for old in os.listdir(BATCH_DIR):
-            if old != ".gitkeep":
+            if re.fullmatch(r"task_\d+\.md", old) or old == "index.json":
                 os.remove(os.path.join(BATCH_DIR, old))
 
     # --only bypasses pending_chapters(), so re-check here. Otherwise an

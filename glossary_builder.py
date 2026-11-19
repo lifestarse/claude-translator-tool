@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Затравочный глоссарий: выверенные вручную термины + частотные кандидаты.
+"""
+Ручной глоссарий тайтла и правила родов (Он / Она / Оно) -> glossary.json / glossary.md.
 
-Пишет glossary.json (запасной глоссарий для common.load_glossary) и
-glossary.md для человека. Выверенные термины и правила родов тайтла
-вписываются в PRONOUN_RULES и KNOWN_DICTIONARY ниже — для нового тайтла
-они пусты. Частотные n-граммы попадают в файл с пометкой
-«Авто-обнаруженный термин» и в промпты не уходят.
+Всё, что лежит в KNOWN_DICTIONARY, common.load_glossary() читает как
+выверенное вручную, и glossary_merge.py ставит это ПОВЕРХ вердиктов судей,
+а glossary_extract.py исключает из кандидатов. Поэтому словарь тайтл-зависим
+и держится пустым, пока человек не выверит записи именно для этой книги.
+Словарь прошлой книги («进化的四十六亿重奏»: 琳→Линь, 虛空→Пустота, 眼球→…)
+отсюда убран: 虛空 и 眼球 встречаются и в новой, и старые переводы молча уехали
+бы в задания переводчику. Пустой словарь — рабочее состояние: в glossary.json
+попадут только авто-обнаруженные n-граммы, а их load_glossary отбрасывает.
 
-    python glossary_builder.py
+Конвейер этот скрипт не вызывает; запускать только руками.
 """
 
 import argparse
+import json
 import os
 import sys
 import re
@@ -26,6 +31,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CHAPTERS_DIR = os.path.join(ROOT, "chapters")
 GLOSSARY_JSON = os.path.join(ROOT, "glossary.json")
 GLOSSARY_MD = os.path.join(ROOT, "glossary.md")
+BOOK_FILE = os.path.join(ROOT, "BOOK.md")
+CATALOG_FILE = os.path.join(ROOT, "catalog.json")
 
 # ============================================================
 # Правила согласования в роде (Он / Она / Оно) — заполняются под тайтл.
@@ -35,15 +42,38 @@ GLOSSARY_MD = os.path.join(ROOT, "glossary.md")
 # ============================================================
 PRONOUN_RULES = {}
 
-# Выверенные термины тайтла. Формат:
-#   "原文": {"ru": "Перевод", "en": "English", "gender": "Она / Её",
-#           "category": "Персонаж", "desc": "кто это"},
+# Формат: {"Сущность (中文)": {"ru_gender": "Мужской род (Он / Его)",
+#                               "rule_desc": "когда и почему"}}
+# Заполняется вручную под текущий тайтл.
+PRONOUN_RULES = {}
+
+# Формат: {"中文": {"ru": "...", "en": "...", "gender": "Он / Его",
+#                    "category": "...", "desc": "..."}}
+# Только записи, выверенные человеком для ТЕКУЩЕГО тайтла (см. docstring).
 KNOWN_DICTIONARY = {}
 
-STOP_WORDS = {
-    "這個世界", "又或者", "在絨球", "這些球", "這個球", "似乎是", "而且是",
-    "在創造者", "琳的飛行者", "琳讓飛行者", "琳的絨球", "如果是", "不過是"
-}
+# Ложные «термины» авто-обнаружения, специфичные для тайтла.
+STOP_WORDS = set()
+
+def book_title():
+    """Русское название из BOOK.md, иначе китайское; иначе заглушка."""
+    try:
+        text = open(BOOK_FILE, encoding='utf-8').read()
+    except OSError:
+        return "тайтл не задан (BOOK.md)"
+    for key in ("Русское", "Оригинал"):
+        m = re.search(r"^-\s*" + key + r"[^:]*:\s*(.+)$", text, re.M)
+        if m and m.group(1).strip() and "SET-ME" not in m.group(1):
+            return m.group(1).strip()
+    return "тайтл не задан (BOOK.md)"
+
+def catalog_size():
+    """Сколько глав в каталоге; None, если каталога нет."""
+    try:
+        data = json.load(open(CATALOG_FILE, encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return len(data) if isinstance(data, list) else None
 
 def extract_terms_comprehensive(text):
     if LANG.code != "zh":
@@ -54,7 +84,7 @@ def extract_terms_comprehensive(text):
     all_terms.extend(p1.findall(text))
     p2 = re.compile(r'[\u4e00-\u9fa5]{2,4}')
     all_terms.extend(p2.findall(text))
-    p3 = re.compile(r'[「"]([\u4e00-\u9fa5]{2,10})[」"]')
+    p3 = re.compile(r'[「“"]([\u4e00-\u9fa5]{2,10})[」”"]')
     all_terms.extend(p3.findall(text))
     return all_terms
 
@@ -125,8 +155,9 @@ def build_glossary():
 
     # Save Markdown
     with open(GLOSSARY_MD, 'w', encoding='utf-8') as f:
-        f.write("# 📖 Глоссарий и правила родов (Он / Она / Оно)\n\n")
-        f.write(f"> **Обработано глав:** {len(chapter_files)}\n\n")
+        f.write(f"# 📖 Полный Глоссарий и Правила Родов (Он / Она / Оно): «{book_title()}»\n\n")
+        total = catalog_size()
+        f.write(f"> **Обработано глав:** {len(chapter_files)} / {total if total else '?'}\n\n")
         f.write("---\n\n")
 
         f.write("## ⚖️ Правила согласования родов и местоимений (Он / Она / Оно)\n\n")

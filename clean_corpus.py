@@ -19,7 +19,9 @@ from common import (
     CHAPTERS_DIR,
     clean_paragraphs,
     read_text,
+    ru_path,
     split_paragraphs,
+    strip_title_thanks,
     write_text,
 )
 
@@ -44,6 +46,7 @@ def main():
     paras_dropped = 0
     chars_removed = 0
     truncated_samples = []
+    held_back = []
 
     for name in files:
         path = os.path.join(CHAPTERS_DIR, name)
@@ -55,9 +58,24 @@ def main():
         # what counts as spam, and the before/after comparison below already
         # skips untouched files, so the gate bought nothing and cost two bugs.
         before = split_paragraphs(text)
-        after = clean_paragraphs(before)
+        if not before:
+            continue
+        # Первая строка — заголовок, и чистится она отдельно. Через
+        # clean_paragraphs он уходил целиком: «血氣（感謝大魚ZT的打賞）» для THANKS_RE
+        # — записка автора, и 12 глав второй книги теряли заголовок, а с ним и
+        # номер для author_numbers/manifest. С заголовка снимается только
+        # скобочный хвост благодарности.
+        after = [strip_title_thanks(before[0])] + clean_paragraphs(before[1:])
 
         if len(after) == len(before) and "\n\n".join(after) == "\n\n".join(before):
+            continue
+
+        # Глава уже переведена, а число абзацев оригинала меняется — перевод
+        # перестанет с ним сходиться, и verify забракует исправную главу (так
+        # было с 721, 816, 881: см. common.SPAM_MARKERS). Такие файлы не
+        # переписываются: оригинал и ru/ чинить одним заходом, руками.
+        if len(after) != len(before) and os.path.exists(ru_path(int(name[8:12]))):
+            held_back.append((name, len(before) - len(after)))
             continue
 
         touched += 1
@@ -80,6 +98,12 @@ def main():
     print("Затронуто файлов        : %d" % touched)
     print("Удалено абзацев целиком : %d" % paras_dropped)
     print("Удалено символов        : %d" % chars_removed)
+    if held_back:
+        print("")
+        print("НЕ тронуто — глава уже переведена, а абзацев стало бы меньше (%d):"
+              % len(held_back))
+        for name, n in held_back[:20]:
+            print("  %s: -%d абз. — править оригинал и ru/ одним заходом" % (name, n))
     if args.dry_run:
         print("")
         print("(пробный прогон, файлы не изменены)")

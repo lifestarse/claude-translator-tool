@@ -70,11 +70,19 @@ def main():
     rows.sort(reverse=True)
 
     os.makedirs(DRIFT_DIR, exist_ok=True)
-    # Пакеты нумеруются заново с 001 — старые задания, вердикты и захваты
-    # с теми же номерами иначе заставили бы драйвер пропустить новые пакеты.
-    for old in os.listdir(DRIFT_DIR):
-        if old.startswith(("judge_", "verdict_")) or old.endswith(".claim"):
-            os.remove(os.path.join(DRIFT_DIR, old))
+    # Номера пакетов начинаются с 001 заново, а драйвер пропускает пакет, у
+    # которого уже есть verdict или claim. Без чистки новый judge_001.md с
+    # другим составом не судился бы вовсе, а старый вердикт остался бы
+    # приписан ему. Как в build_glossfix: раунд — с чистого листа.
+    # Удаляются только файлы раунда (задания, вердикты, claim, индекс): чужой
+    # файл или подкаталог в drift/ — не наш, а --report может лежать и здесь.
+    report = os.path.abspath(args.report)
+    for f in os.listdir(DRIFT_DIR):
+        p = os.path.join(DRIFT_DIR, f)
+        if not os.path.isfile(p) or os.path.abspath(p) == report:
+            continue
+        if f.startswith(("judge_", "verdict_")) or f.endswith(".claim"):
+            os.remove(p)
     index, tag, block = [], 0, []
     for n, (m, key, misses) in enumerate(rows, 1):
         ru_name, cn = key.rsplit(" (", 1)

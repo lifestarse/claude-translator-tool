@@ -37,6 +37,71 @@ CHAPTER_NUM_RE = re.compile(r"第\s*(\d+)\s*章")
 # Bare "+12章" continuation inside a merged title, e.g. "第11章+12章"
 BARE_NUM_RE = re.compile(r"[+＋]\s*(\d+)\s*章")
 
+# Заголовок второй книги устроен иначе: «《我的成神日志》一百四十九 邀請維加入4王幫？» —
+# служебный префикс с названием книги, номер китайскими цифрами и никаких 第/章.
+# Шаблоны выше на таком заголовке молчат (1004 записи из 1005 «без номера»), а
+# мягкие арабские шаблоны author_numbers ловили цифры из самого названия главы:
+# «看清楚這3張臉» давало номер 3, «符文第1定律» — номер 1 и новый том.
+# Поэтому номер берётся только из НАЧАЛА заголовка, после снятия префикса, и
+# только если за числительным идёт пробел: «十萬火急» номером не станет.
+BOOK_PREFIX_RE = re.compile(r"^\s*《[^》]*》\s*")
+CN_HEAD_NUM_RE = re.compile(r"^([零〇一二兩两三四五六七八九十百千]+)(?=\s|$)")
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2, "三": 3,
+              "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+
+
+def cn2int(s):
+    """Китайское числительное -> int: 一百零六 -> 106, 一十二 -> 12, 十 -> 10.
+
+    Без единиц разряда (一〇〇五) читается позиционно. ValueError на чужом знаке.
+    """
+    if not s:
+        raise ValueError("пустое числительное")
+    if not any(ch in _CN_UNITS for ch in s):
+        return int("".join(str(_CN_DIGITS[ch]) for ch in s))
+    total, digit = 0, None
+    for ch in s:
+        if ch in _CN_DIGITS:
+            digit = _CN_DIGITS[ch]
+        elif ch in _CN_UNITS:
+            total += (1 if digit is None else digit) * _CN_UNITS[ch]
+            digit = None
+        else:
+            raise ValueError("не китайская цифра: %r" % ch)
+    return total + (digit or 0)
+
+
+def strip_book_prefix(title):
+    """«《我的成神日志》一 開端» -> «一 開端». Без префикса — как есть."""
+    return BOOK_PREFIX_RE.sub("", title, count=1).strip()
+
+
+def parse_title_number(title):
+    """Номер китайскими цифрами в начале заголовка или None.
+
+    Только начало: числа внутри названия («看清楚這3張臉», «（第4章）») — часть
+    названия, а не номер главы.
+    """
+    m = CN_HEAD_NUM_RE.match(strip_book_prefix(title))
+    if not m:
+        return None
+    try:
+        return cn2int(m.group(1))
+    except (ValueError, KeyError):
+        return None
+
+
+# Благодарность за донат прямо в названии главы: «血氣（感謝大魚ZT的打賞）»,
+# у длинных сайт обрезает хвост многоточием и скобку не закрывает. Снимается
+# ТОЛЬКО скобочный хвост в конце строки заголовка. THANKS_RE к заголовку не
+# применять: он выбрасывает абзац целиком, и clean_corpus так стёр 12 заголовков.
+TITLE_THANKS_RE = re.compile(r"\s*[（(]\s*(?:感謝|感谢|謝謝|谢谢|多謝)[^（(）)\n]*[）)]?\s*$")
+
+
+def strip_title_thanks(title):
+    return TITLE_THANKS_RE.sub("", title).strip() or title
+
 
 EXCLUDED_FILE = os.path.join(ROOT, "excluded_chapters.json")
 
@@ -44,10 +109,12 @@ EXCLUDED_FILE = os.path.join(ROOT, "excluded_chapters.json")
 def load_excluded():
     """Chapters that must never be translated -> {index: reason}.
 
-    Two kinds, both silent failures if ignored. `duplicate_body` files are
+    Several kinds, all silent failures if ignored. `duplicate_body` files are
     full-size and pass every structural check, but hold another chapter's text;
     translating one puts the same chapter in the book twice under different
     numbers. `empty_source` files have no text to translate at all.
+    `author_note` — запись каталога без номера главы (上架感言, реклама новой
+    книги): не текст книги, хотя и выглядит как обычная страница.
     """
     data = load_json(EXCLUDED_FILE, {}) or {}
     return {e["index"]: e.get("reason", "") for e in data.get("excluded", [])}
@@ -65,10 +132,16 @@ def parse_chapter_numbers(title):
     """Return every real chapter number a title claims, in order.
 
     The site merges chapters ("第11章+12章 共生"), so one file can cover several.
-    Returns [] for front/back matter ("完本感言", "序章").
+    Returns [] for front/back matter ("完本感言", "序章", "上架感言").
     """
     if LANG.code != "zh":
         return LANG.chapter_numbers(title)
+    # Китайское число в начале заголовка проверяется первым: у такого
+    # заголовка «第4章» внутри названия (гл. 190) — не номер.
+    n = parse_title_number(title)
+    if n is not None:
+        return [n]
+    title = strip_book_prefix(title)
     nums = [int(n) for n in CHAPTER_NUM_RE.findall(title)]
     nums += [int(n) for n in BARE_NUM_RE.findall(title)]
     seen, out = set(), []
@@ -182,6 +255,50 @@ SPAM_SPANS = (
     r"進化的四十六億重奏\s*結合\s*蠻荒紀\S*\s*小說改編網頁遊戲[^\n。]{0,20}！{0,3}",
     r"高速文字手打\s*進化的四十六億重奏章節列表",
     r"上一頁返回最新章節列表\(回車\)下一頁",
+    # Девятое семейство, вторая книга (czbooks ui8444): футер «請記住本書首發域名：
+    # czbooks.net» и «多本小說網» отдельными абзацами в конце главы. Маркеры
+    # 本書首發 и 小說網 резали их по своей позиции и оставляли огрызки «請記住» и
+    # «多本» — китайские, поэтому RESIDUE_RE их пропускал. Голое 請記住 в прозе
+    # есть (гл. 269 «請記住這個名字», 288), поэтому опора — 域名/網址 в пределах
+    # одного предложения, а «多本» — только вплотную к 小說網 («許多本此類題材的
+    # 小說，» в гл. 320 не задет: там запятая и нет 網).
+    r"請記住[^\s。！？，]{0,12}(?:域名|網址)[:：]?\s*[A-Za-z0-9./:\-]*",
+    r"多本[^\s。！？，]{0,6}小說網[A-Za-z0-9./:\-]*",
+    # Десятое семейство, та же книга, найдено 30.10.2026 читателем EPUB (гл.
+    # 483–484): водяные знаки зеркал с названием книги, ушедшие переводчику и
+    # переведённые как «Самые свежие главы „Моего дневника…“» и «добавляйте в
+    # закладки». 210 исходников 194–959: «，最快更新我的成神日志» (189),
+    # «喜歡…請大家收藏:(…)…更新速度最快。» (48), «我的成神日志 https://» в конце,
+    # голое «我的成神日志», «戀上你看書網，…», а внутри прозы — префикс «最新網址:»
+    # и вставка «新為你提供最快的…更新，». Опора — название книги рядом со
+    # словами рекламы, так что упоминание книги автором (гл. 1003) не задето.
+    r"[，,]?\s*最快更新我的成神日[志誌]",
+    r"喜歡我的成神日[志誌]請大家收藏[:：]?\s*[(（][^)）]*[)）]\s*我的成神日[志誌]更新速度最快[。.]?",
+    # Вставка тянет за собой ссылку на саму главу: «…更新，499強大如他» —
+    # номер и название, хвост абзаца до конца.
+    r"新?為你提供最快的我的成神日[志誌]更新[，,]?[^。！？」”]*$",
+    # И приписка зеркала в конце гл. 499–500: «網頁版章節內容慢，請下載愛閱app…»,
+    # «請退出轉碼頁面，請下載愛閱app閱讀最新章節。» отдельными абзацами.
+    r"網頁版章節內容慢[，,]?\s*請下載\S{0,6}app\S*",
+    r"請退出轉碼頁面[，,]?\s*請下載\S{0,6}app\S*",
+    r"(?:戀上你看書網[，,]?\s*)?我的成神日[志誌]\s*(?:https?://\S*)?\s*$",
+    r"^\s*最新網址[:：]\s*",
+    # Тот же зеркальный мусор без названия книги: префикс «熱門推薦:» в начале
+    # первого абзаца (гл. 238–282, 45 глав; трижды переведён как «Горячая
+    # новость:») и кнопка «加入書簽» последним абзацем (гл. 888–922).
+    r"^\s*熱門推薦[:：]\s*",
+    r"^\s*加入書[簽签]\s*$",
+    # Одиннадцатое семейство — нашла смысловая приёмка, а не чистка: агенты
+    # честно перевели его как текст книги. Реклама читалки «咪咪閱讀» в 【】
+    # (гл. 341–404, 27 глав), обрывки водяных знаков отдельным абзацем
+    # (天才 / s.. / 燃文 / 雅文庫 / 番茄), названия чужих новелл одной строкой
+    # в 《》 посреди сцены (гл. 913–1002) и просьбы о голосах без пометки ps.
+    # Всё — только целым абзацем (^…$): «天才！» в реплике не задето.
+    r"【[^】]*咪咪閱讀[^】]*】",
+    r"^\s*(?:天才|s\.\.|燃文|雅文庫|番茄)\s*$",
+    r"^\s*《[^》]{2,12}》\s*$",
+    r"^\s*大佬們[，,]?\s*月[初底]求票票啦[～~]?\s*$",
+    r"^\s*月[初底]啦[，,]\s*求個\s*$",
 )
 SPAM_SPAN_RE = re.compile("|".join(SPAM_SPANS))
 
@@ -259,6 +376,16 @@ THANKS_TAIL_RE = re.compile(r"[…]{4,}(?=[^。！？\n]{0,60}(?:謝謝|感謝|�
 # an earlier version of this function did.
 DANGLING = " 　\t:：，,、;；-—~～("
 
+# Огрызки девятого семейства, уже лежащие на диске: главы второй книги, скачанные
+# до появления пролётов выше, хранят футер обрезанным до «多本» и «請記住» —
+# отдельным абзацем, без единого знака препинания (66 абзацев на 1005
+# главах, все в двух последних). Только полное совпадение абзаца: в прозе 請記住
+# стоит внутри фразы и с пунктуацией, такой абзац правило не видит.
+# Туда же «7017k» — метка сайта-источника последним абзацем в 411 главах из
+# 1005, ни разу внутри прозы. Латиница и цифры, но RESIDUE_RE её не берёт:
+# остаток считается мусором, только если абзац уже менялся.
+FOOTER_STUB_RE = re.compile(r"[\s　]*(?:多本|請記住|7017k)[\s　]*")
+
 
 def strip_spam(paragraph):
     """Cut the watermark off a paragraph, keeping any story text before it.
@@ -280,6 +407,8 @@ def strip_spam(paragraph):
             return ""
         paragraph = rest
     if not paragraph:
+        return ""
+    if FOOTER_STUB_RE.fullmatch(paragraph):
         return ""
     if PS_NOTE_RE.match(paragraph):
         return ""

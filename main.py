@@ -31,6 +31,7 @@
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -38,6 +39,8 @@ import time
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOCK = os.path.join(ROOT, ".publish_lock")
 TOKEN_FILE = os.path.join(ROOT, ".ranobelib_token")
+MERGE_TOOL = os.path.join("tools", "merge_broken_paragraphs.py")
+PUBLISHER = os.path.join(ROOT, "publish_ranobelib.py")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -65,6 +68,30 @@ def have_token():
     return os.path.exists(TOKEN_FILE) or os.environ.get("RANOBELIB_TOKEN", "").strip()
 
 
+def site_unconfigured():
+    """Почему выкладку нельзя запускать, или None, если тайтл настроен.
+
+    Читается текст publish_ranobelib.py, а не импорт: пока SLUG = SET-ME,
+    импорт этого модуля может падать, а здесь нужен ответ, а не трейсбек.
+    Значения — из BOOK.md, раздел «RanobeLIB» (SLUG и TEAM_ID).
+    """
+    try:
+        with open(PUBLISHER, encoding="utf-8") as f:
+            code = f.read()
+    except OSError:
+        return "нет publish_ranobelib.py"
+    slug = re.search(r"""^SLUG\s*=\s*["']([^"']*)["']""", code, re.M)
+    team = re.search(r"^TEAM_ID\s*=\s*(\d+)", code, re.M)
+    missing = []
+    if not slug or "SET-ME" in slug.group(1) or not re.match(r"\d+--", slug.group(1)):
+        missing.append("SLUG")
+    if not team or int(team.group(1)) == 0:
+        missing.append("TEAM_ID")
+    if missing:
+        return "не задан %s в publish_ranobelib.py (см. BOOK.md)" % " и ".join(missing)
+    return None
+
+
 def publishing_busy():
     """Выкладка уже идёт в другом окне — второй прогон запускать нельзя."""
     return os.path.exists(LOCK)
@@ -79,8 +106,14 @@ def step_finalize(dry):
 
 
 def step_merge(dry):
-    return run("tools/merge_broken_paragraphs.py",
-               *([] if dry else ["--apply"]), allow_fail=True)
+    # Инструмента склейки в каркасе нет: он остался в репозитории прошлой книги.
+    # Без него шаг не валит прогон — главы уходят как есть (абзацы 1:1 с
+    # источником, приёмку они проходят), а разрыв посреди фразы виден читателю.
+    if not os.path.exists(os.path.join(ROOT, MERGE_TOOL)):
+        print("    [пропуск] нет %s — абзацы, разрезанные источником, не склеиваются"
+              % MERGE_TOOL.replace(os.sep, "/"))
+        return 0, ""
+    return run(MERGE_TOOL, *([] if dry else ["--apply"]), allow_fail=True)
 
 
 def step_verify(dry):
@@ -91,6 +124,10 @@ def step_publish(dry):
     if not have_token():
         print("    [пропуск] нет токена: положи строку в .ranobelib_token")
         return 0, ""
+    why = site_unconfigured()
+    if why:
+        print("    [пропуск] %s" % why)
+        return 0, ""
     if publishing_busy():
         print("    [пропуск] выкладка уже идёт (есть .publish_lock)")
         return 0, ""
@@ -100,6 +137,10 @@ def step_publish(dry):
 def step_sync(dry):
     if not have_token():
         print("    [пропуск] нет токена")
+        return 0, ""
+    why = site_unconfigured()
+    if why:
+        print("    [пропуск] %s" % why)
         return 0, ""
     if publishing_busy():
         print("    [пропуск] выкладка уже идёт")
@@ -158,7 +199,11 @@ def status():
     print("")
     rc, out = run("autorun.py", "--status", allow_fail=True)
     print("")
-    rc, out = run("publish_ranobelib.py", "--status", allow_fail=True)
+    why = site_unconfigured()
+    if why:
+        print("Выкладка на сайт  : не настроена — %s" % why)
+    else:
+        rc, out = run("publish_ranobelib.py", "--status", allow_fail=True)
     print("")
     print("Токен RanobeLIB   : %s" % ("есть" if have_token() else "НЕТ, выкладка недоступна"))
     print("Выкладка сейчас   : %s" % ("идёт" if publishing_busy() else "не запущена"))

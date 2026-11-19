@@ -20,6 +20,9 @@ from common import ROOT, load_json, save_json
 SETTINGS_FILE = os.path.join(ROOT, ".launcher_settings.json")
 PROCESSES_FILE = os.path.join(ROOT, ".launcher_processes.json")
 WORKER_FILE = os.path.join(ROOT, "launcher_worker.ps1")
+# Журнал для задач, которые своего не ведут; его хвост показывает пульт.
+# autorun пишет autorun.log сам — ему не передаётся, чтобы не задваивать строки.
+PUBLISH_LOG = os.path.join(ROOT, "publish.log")
 LOG_DIR = os.path.join(ROOT, "logs")
 
 DEFAULT_MODELS = [
@@ -149,9 +152,11 @@ class TaskManager:
         if busy:
             print("Сначала останови: %s." % ", ".join(TASKS[n]["label"] for n in busy))
             return
-        if not os.path.isfile(os.path.join(ROOT, script)) or \
-                (os.name == "nt" and not os.path.isfile(WORKER_FILE)):
-            print("Не найден файл запуска для «%s»." % spec["label"])
+        if os.name == "nt" and not os.path.isfile(WORKER_FILE):
+            print("Нет launcher_worker.ps1 в %s — задачи не запускаются." % ROOT)
+            return
+        if not os.path.isfile(os.path.join(ROOT, script)):
+            print("Нет %s — «%s» запустить нечем." % (script, spec["label"]))
             return
         env = os.environ.copy()
         env.update(self.session_env)
@@ -161,7 +166,11 @@ class TaskManager:
                 "-File", WORKER_FILE, "-Python", sys.executable,
                 "-WorkingDirectory", ROOT, "-Script", os.path.join(ROOT, script),
                 "-TaskLabel", spec["label"],
-            ] + list(args)
+            ]
+            if spec["group"] == "publisher":
+                command += ["-LogFile", PUBLISH_LOG]
+            # -ScriptArgs последним: всё после него worker отдаёт скрипту как есть.
+            command += ["-ScriptArgs"] + list(args)
             flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | \
                     getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             try:

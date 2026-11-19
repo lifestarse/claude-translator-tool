@@ -20,7 +20,7 @@ from contextlib import redirect_stdout
 # Без ScriptRunContext streamlit-вызовы уходят в пустоту — процесс «работает»,
 # а интерфейса нет. Поэтому: headless=false явно (иначе браузер не откроется),
 # а защита от рекурсии — через переменную окружения, не через молчаливый except.
-if __name__ == "__main__" and os.environ.get("SIMPHONY_CONFIG_UI_CHILD") != "1":
+if __name__ == "__main__" and os.environ.get("PIPELINE_CONFIG_UI_CHILD") != "1":
     _ctx = None
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -35,7 +35,7 @@ if __name__ == "__main__" and os.environ.get("SIMPHONY_CONFIG_UI_CHILD") != "1":
         ] + sys.argv[1:]
         print("Поднимаю пульт конвейера: сейчас откроется вкладка браузера "
               "(если нет — http://localhost:8501). Остановить: Ctrl+C или закрыть это окно.")
-        env = dict(os.environ, SIMPHONY_CONFIG_UI_CHILD="1")
+        env = dict(os.environ, PIPELINE_CONFIG_UI_CHILD="1")
         raise SystemExit(subprocess.run(cmd, env=env).returncode)
 
 import streamlit as st
@@ -43,6 +43,7 @@ import streamlit as st
 import autorun
 import launcher_console as lc
 from common import ROOT, load_json, save_json
+from setup_book import read_book
 
 TOKEN_FILE = os.path.join(ROOT, ".ranobelib_token")
 CHAPTERS_DIR = os.path.join(ROOT, "chapters")
@@ -52,7 +53,13 @@ RU_DIR = os.path.join(ROOT, "ru")
 GATEWAY_BAK = lc.SETTINGS_FILE + ".gateway.bak"
 CONSOLE_KEYS = ("models", "active_model", "fixer_model", "defaults")
 
-st.set_page_config(page_title="Пульт конвейера перевода", page_icon="📖", layout="wide")
+# Название — из BOOK.md: пульт переживает смену тайтла, константа здесь — нет.
+try:
+    _TITLE = read_book()["title"]
+except OSError:
+    _TITLE = ""
+st.set_page_config(page_title="Пульт конвейера" + (" — " + _TITLE if _TITLE else ""),
+                   page_icon="📖", layout="wide")
 
 
 def manager_call(fn, *args):
@@ -156,8 +163,8 @@ with tab_run:
                 value=min(settings["defaults"]["autorun_count"], len(todo) or 1))
             prewave = st.checkbox(
                 "Судить новые термины перед переводом", value=True,
-                help="Выключать осознанно. Прогон 119–500 прошёл без суда — "
-                     "13 терминов разъехались, у народа 亞特族群 стало 15 имён.")
+                help="Выключать осознанно. На прошлой книге прогон без суда развёл "
+                     "13 терминов, у одного народа стало 15 имён.")
             if st.form_submit_button("▶ Перевод"):
                 settings["defaults"]["autorun_count"] = int(count)
                 save_settings(settings)

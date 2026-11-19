@@ -29,6 +29,7 @@ import sys
 
 from lang import LANG
 from common import (
+    CHAPTERS_DIR,
     ROOT,
     chapter_path,
     load_json,
@@ -37,6 +38,7 @@ from common import (
     save_json,
     write_text,
 )
+from prewave_terms import STYLE_REF, style_sample
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -45,7 +47,6 @@ BATCH_DIR = os.path.join(ROOT, "glossary_batches")
 JUDGED_DIR = os.path.join(ROOT, "glossary_judged")
 GLOSSARY_V2 = os.path.join(ROOT, "glossary_v2.json")
 OVERRIDES_FILE = os.path.join(ROOT, "glossary_overrides.json")
-STYLE_REF = "glossary_style_reference.md"
 
 QUOTES_PER_TERM = 3
 QUOTE_PAD = 26          # characters of context on each side
@@ -63,17 +64,14 @@ def gather_context(cns):
     """One pass over the corpus: counts, translated-chapter counts, quotes.
 
     Deliberately a single scan for all disputed terms at once. Per-term scans
-    of 4885 files is the kind of thing that turns a rare operation into one
-    nobody runs.
+    of the whole corpus is the kind of thing that turns a rare operation into
+    one nobody runs. Главы берутся по листингу chapters/, а не до зашитого
+    номера: потолок прошлой книги (4885) к новой отношения не имеет.
     """
     stats = {cn: {"chapters": [], "mentions": 0, "quotes": []} for cn in cns}
-    chapters_dir = os.path.dirname(chapter_path(1))
-    indices = sorted(
-        int(m.group(1)) for m in (re.fullmatch(r"chapter_(\d+)\.txt", f)
-                                  for f in (os.listdir(chapters_dir)
-                                            if os.path.isdir(chapters_dir) else []))
-        if m)
-    for idx in indices:
+    names = sorted(n for n in os.listdir(CHAPTERS_DIR)
+                   if n.startswith("chapter_") and n.endswith(".txt") and n[8:-4].isdigit())
+    for idx in (int(n[8:-4]) for n in names):
         path = chapter_path(idx)
         try:
             text = read_text(path)
@@ -138,9 +136,14 @@ def build(conflicts, collisions, glossary):
         "",
         "Записать решения в: `glossary_judged/arbitration_001.json`",
         "",
-        "Образец стиля принятых терминов: `%s` — прочитай его первым." % STYLE_REF,
-        "",
     ]
+    # Образец стиля — только если он есть: у нового тайтла файла нет, и
+    # ссылка на него отправляла арбитра читать пустоту. Ниже и так стоит
+    # полный список выданных имён, поэтому без файла хватает его.
+    if os.path.exists(os.path.join(ROOT, STYLE_REF)):
+        lines += ["Образец стиля принятых терминов: `%s` — прочитай его первым." % STYLE_REF, ""]
+    elif style_sample():
+        lines += ["Образец стиля — уже принятые термины:", "", style_sample(), ""]
 
     if collisions:
         lines += [

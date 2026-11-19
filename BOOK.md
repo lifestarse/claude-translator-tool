@@ -6,7 +6,8 @@
 - Оригинал (на языке оригинала): SET-ME
 - Русское (официальное на RanobeLIB, если уже есть): SET-ME
 - Английское: SET-ME
-- Автор (как на карточке RanobeLIB): SET-ME
+- Автор (как на карточке RanobeLIB, оригинал в скобках): SET-ME
+- Обложка EPUB (путь от корня проекта; пусто — без обложки): cover.jpg
 - Язык оригинала (код): zh
   <!-- zh ja ko en es fr de pt it nl pl tr vi id th ar fa he hi uk; подробности: python lang.py -->
 - Норма объёма (мин-макс):

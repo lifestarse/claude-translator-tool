@@ -44,7 +44,14 @@ GLOSSARY_V2 = os.path.join(ROOT, "glossary_v2.json")
 # applied to raw agent proposals it accepts 病毒 "virus" (4% of chapters) and
 # 感染 "infection" (7%) -- topical in a book about evolving cells, but still
 # ordinary nouns.
-MAX_SPREAD = 0.03
+#
+# 0.03 был откалиброван на 4884 главы книги про клетки. На ~1005 главах новой
+# это 30 глав, и сквозной персонаж или место, живущие дольше одной арки,
+# отсекались как «обычная лексика». Порог поднят, а превысивший его кандидат
+# с заглавной буквы больше не выбрасывается: он уходит в to_judge, и его
+# решает судья следующей волны (prewave_terms.py). Строчные по-прежнему
+# отсекаются раньше — урок про 病毒/感染 в силе.
+MAX_SPREAD = 0.10
 
 # The load-bearing test is orthographic, not statistical. Agents are asked for
 # proper nouns, and Russian capitalises them; every junk proposal in the pilot
@@ -129,6 +136,9 @@ def pick_canonical(ordered):
 def main():
     ap = argparse.ArgumentParser(description="Накопление терминов от переводчиков")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--max-spread", type=float, default=MAX_SPREAD,
+                    help="доля глав, выше которой имя не принимается само, а идёт к судье "
+                         "(по умолчанию %(default)s)")
     args = ap.parse_args()
 
     if not os.path.exists(RAW_FILE):
@@ -154,6 +164,13 @@ def main():
     already = load_json(ACCUMULATED_FILE, {}) or {}
     for e in already.get("glossary", []):
         known.add(e["cn"])
+    # Отложенные к судье и отклонённые судьёй больше не пересчитываются по
+    # корпусу после каждой главы: решение по ним принимает или уже принял суд.
+    # Без отклонённых судьёй термин возвращался в v2 через накопитель.
+    to_judge = list(already.get("to_judge") or [])
+    for e in to_judge + list(v2.get("rejected") or []):
+        if isinstance(e, dict) and e.get("cn"):
+            known.add(e["cn"])
 
     fresh = {cn: v for cn, v in proposals.items() if cn not in known}
     print("    уже в глоссарии: %d, новых: %d" % (len(proposals) - len(fresh), len(fresh)))
@@ -164,7 +181,7 @@ def main():
     print("[+] Считаю разброс по корпусу...", flush=True)
     docfreq, total = corpus_spread(set(fresh))
 
-    accepted, rejected, conflicts = [], [], []
+    accepted, rejected, conflicts, deferred = [], [], [], []
     for cn, variants in sorted(fresh.items()):
         if len(cn) < MIN_LEN:
             rejected.append({"cn": cn, "reason": "слишком короткий"})
@@ -180,7 +197,15 @@ def main():
         if LANG.has_source_script(ru):
             rejected.append({"cn": cn, "ru": ru, "reason": "русский вариант не переведён (остался язык оригинала)"})
             continue
-        if not ru[:1].isupper():
+        # Строчная — суждение «нарицательное» только у разового предложения.
+        # Термин, который переводчики приносят снова и снова, — это термин мира
+        # со строчной буквы по-русски (中轉球 «транзитный шар», 傳送陣
+        # «телепортационный массив»): у второй книги таких 210, и каждый,
+        # не попав в глоссарий, переизобретался в каждой главе — 中轉球 набрал
+        # девять написаний за двенадцать глав. Повтор в двух главах и больше
+        # снимает отсев: канон — первый вариант, как и у имён.
+        named_chapters = {i for i, _v in variants}
+        if not ru[:1].isupper() and len(named_chapters) < 2:
             rejected.append({
                 "cn": cn, "ru": ru,
                 "reason": "со строчной буквы — агент передал это как нарицательное, а не имя",
@@ -188,10 +213,13 @@ def main():
             continue
         df = docfreq.get(cn, 0)
         spread = df / max(total, 1)
-        if spread >= MAX_SPREAD:
-            rejected.append({
-                "cn": cn, "ru": ru,
-                "reason": "обычная лексика: встречается в %d главах из %d (%.0f%%)"
+        if spread >= args.max_spread:
+            # Заглавная уже проверена выше: это имя по мнению переводчика, но
+            # слишком частое, чтобы принять его без суда. Знаменатель к тому же
+            # растёт, пока scraper докачивает, — решать это механически нельзя.
+            deferred.append({
+                "cn": cn, "ru": ru, "named_in": named_in,
+                "reason": "встречается в %d главах из %d (%.0f%%) — решит судья"
                           % (df, total, spread * 100),
             })
             continue
@@ -208,6 +236,7 @@ def main():
     print("=== НАКОПЛЕНИЕ ===")
     print("Принято    : %d" % len(accepted))
     print("Отклонено  : %d" % len(rejected))
+    print("К судье    : %d" % len(deferred))
     print("Конфликтов : %d" % len(conflicts))
 
     if accepted:
@@ -220,6 +249,11 @@ def main():
         print("Отклонённые:")
         for e in rejected[:15]:
             print("   %-10s -> %-24s %s" % (e["cn"], e.get("ru", "")[:24], e["reason"]))
+    if deferred:
+        print("")
+        print("Отложены к судье (частые, решит prewave_terms.py следующей волны):")
+        for e in deferred[:15]:
+            print("   %-10s -> %-24s %s" % (e["cn"], e["ru"][:24], e["reason"]))
     if conflicts:
         print("")
         print("[!] Названы по-разному. Канон взят у того, кто назвал первым;")
@@ -241,6 +275,7 @@ def main():
         "count": len(merged),
         "rejected_last_run": rejected,
         "conflicts": conflicts,
+        "to_judge": to_judge + deferred,
         "glossary": merged,
     })
     print("")

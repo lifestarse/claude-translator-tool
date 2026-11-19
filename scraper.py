@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chapter downloader for czbooks.net/n/ui63l.
+"""Chapter downloader for a czbooks.net book (CATALOG_URL below).
 
 Differences from the previous version, all of which were real bugs:
   * one HTTP client per worker thread instead of a fresh TLS handshake per attempt
@@ -33,12 +33,12 @@ from common import (
     read_text,
     save_json,
     split_paragraphs,
+    strip_title_thanks,
     write_text,
 )
 
 CATALOG_URL = "https://SET-ME"  # страница каталога глав тайтла
 BOOK_ID = CATALOG_URL.rsplit("/", 1)[-1]
-MIRROR_BOOK_ID = "s62gnp"
 MIN_VALID_BYTES = 200
 MIN_VALID_PARAGRAPHS = 3
 
@@ -107,7 +107,6 @@ def fetch_catalog(force=False):
                 "index": len(catalog) + 1,
                 "title": el.text.strip(),
                 "url": url,
-                "mirror_url": absolute(href.replace("/n/%s/" % BOOK_ID, "/n/%s/" % MIRROR_BOOK_ID)),
             }
         )
 
@@ -125,6 +124,9 @@ def parse_chapter_page(html):
     soup = BeautifulSoup(html, "html.parser")
     title_el = soup.select_one("div.name, h1, div.title")
     title = title_el.text.strip() if title_el else ""
+    # «血氣（感謝大魚ZT的打賞）»: благодарность за донат прямо в названии главы.
+    # Переводчику она ни к чему, а clean_corpus без этого стирал заголовок целиком.
+    title = strip_title_thanks(title)
 
     body = soup.select_one("div.content")
     if body is None:
@@ -160,7 +162,7 @@ def download_one(item, max_attempts=6):
     if is_complete(path):
         return idx, "skip", "уже скачана"
 
-    # The mirror book (czbooks.net/n/s62gnp) is real, but it uses its own
+    # The previous title's mirror book on czbooks was real, but it used its own
     # per-chapter slugs. Pasting the primary book's slug onto the mirror path
     # -- which the original scraper did -- yields a URL that always errors, so
     # every other retry was spent on a guaranteed failure. Verified: 0 of 5
@@ -202,7 +204,7 @@ def download_one(item, max_attempts=6):
                 return idx, "fail", last
             continue
 
-        body = (title or item["title"]) + "\n\n" + "\n\n".join(paragraphs) + "\n"
+        body = (title or strip_title_thanks(item["title"])) + "\n\n" + "\n\n".join(paragraphs) + "\n"
         write_text(path, body)
         time.sleep(random.uniform(0.05, 0.15))
         return idx, "ok", title or item["title"]
@@ -210,7 +212,7 @@ def download_one(item, max_attempts=6):
     return idx, "fail", last
 
 
-def run_download(catalog, threads, start, end):
+def run_download(catalog, threads, start, end, failures=None):
     targets = [c for c in catalog if start <= c["index"] <= (end or len(catalog))]
     todo = [c for c in targets if not is_complete(chapter_path(c["index"]))]
     log(
@@ -220,21 +222,39 @@ def run_download(catalog, threads, start, end):
     if not todo:
         return []
 
-    failures, done, t0 = [], 0, time.time()
+    # Список приходит снаружи, чтобы main() записал уже накопленные отказы,
+    # даже если прогон оборвали на середине.
+    failures = [] if failures is None else failures
+    done, t0 = 0, time.time()
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {pool.submit(download_one, item): item for item in todo}
-        for fut in as_completed(futures):
-            idx, status, detail = fut.result()
-            done += 1
-            if status == "fail":
-                failures.append({"index": idx, "title": futures[fut]["title"], "reason": detail})
-            if done % 50 == 0 or done == len(todo):
-                rate = done / max(time.time() - t0, 1e-6)
-                eta = (len(todo) - done) / max(rate, 1e-6)
-                log(
-                    "    [%d/%d] %.1f гл/с | осталось ~%dм %02dс | ошибок: %d"
-                    % (done, len(todo), rate, eta // 60, eta % 60, len(failures))
-                )
+        try:
+            for fut in as_completed(futures):
+                # Защищён в download_one только сетевой вызов: разбор страницы и
+                # запись файла (os.replace на Windows даёт PermissionError, когда
+                # файл держит антивирус) могут бросить что угодно. Одна такая
+                # глава обрывала весь прогон — без scrape_failures.json и без
+                # пересборки manifest.
+                try:
+                    idx, status, detail = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    idx, status, detail = futures[fut]["index"], "fail", "исключение: %r" % exc
+                done += 1
+                if status == "fail":
+                    failures.append({"index": idx, "title": futures[fut]["title"], "reason": detail})
+                if done % 50 == 0 or done == len(todo):
+                    rate = done / max(time.time() - t0, 1e-6)
+                    eta = (len(todo) - done) / max(rate, 1e-6)
+                    log(
+                        "    [%d/%d] %.1f гл/с | осталось ~%dм %02dс | ошибок: %d"
+                        % (done, len(todo), rate, eta // 60, eta % 60, len(failures))
+                    )
+        except KeyboardInterrupt:
+            # Без отмены выход из with ждёт ВСЮ очередь: Ctrl+C «срабатывал»
+            # только после того, как скачано всё до конца. Ждём лишь главы,
+            # которые уже качаются (их не больше числа потоков).
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
     return failures
 
 
@@ -256,6 +276,11 @@ def build_manifest(catalog):
       * transposed digits: ...2162 followed by 第1263章 (should be ~2163)
       * dropped leading digit: ...597 followed by 第98章 (should be ~598)
       * genuine arc restarts: 5 clean drops to 第1章
+    Second book (《我的成神日志》): the number is a Chinese numeral at the head of
+    the title, after the book-name prefix -- common.parse_chapter_numbers reads
+    both forms. Observed there: repeats 七百六十二/八百四十二/八百六十六 and a
+    gap at 843. Entries with no number at all (上架感言, 完結啦, new-book adverts)
+    are flagged non_chapter -- see excluded_chapters.json.
 
     The catalog's own order is the authoritative reading sequence, so the file
     index is the sequence key. The parsed number is kept as a hint and any
@@ -308,6 +333,9 @@ def build_manifest(catalog):
                 "title_number": num,
                 "covers_chapters": nums,
                 "merged": len(nums) > 1,
+                # Ни 第N章, ни числа в начале: объявление автора, а не глава.
+                # Решение, переводить ли, — за человеком (excluded_chapters.json).
+                "non_chapter": not nums,
                 "volume_restart": restarted,
                 "downloaded": on_disk,
             }
@@ -326,6 +354,9 @@ def build_manifest(catalog):
         "volumes": volume,
         "merged_files": sum(1 for e in entries if e["merged"]),
         "unnumbered_entries": [e["index"] for e in entries if e["title_number"] is None],
+        "non_chapter_entries": [
+            {"index": e["index"], "title": e["title"]} for e in entries if e["non_chapter"]
+        ],
         "title_number_anomalies": anomalies,
         "not_downloaded": not_downloaded,
         "entries": entries,
@@ -375,6 +406,8 @@ def verify(catalog):
     print("Арок (рестартов нумерации):     %d" % manifest["volumes"])
     print("Файлов со склейкой глав:        %d" % manifest["merged_files"])
     print("Записей без номера в заголовке: %d" % len(manifest["unnumbered_entries"]))
+    for e in manifest["non_chapter_entries"][:10]:
+        print("    %04d %s — не глава? см. excluded_chapters.json" % (e["index"], e["title"][:40]))
     print("Опечаток в номерах на сайте:    %d" % len(manifest["title_number_anomalies"]))
     print("Ещё не скачано:                 %d" % len(manifest["not_downloaded"]))
 
@@ -399,7 +432,16 @@ def main():
     if args.verify:
         raise SystemExit(0 if verify(catalog) else 1)
 
-    failures = run_download(catalog, args.threads, args.start, args.end)
+    # verify() пересобирает manifest.json, а по нему build_batches и прочие
+    # строят очередь. Прерванный Ctrl+C прогон обязан его всё равно обновить,
+    # иначе снимок остаётся от прошлого раза.
+    failures, interrupted = [], False
+    try:
+        run_download(catalog, args.threads, args.start, args.end, failures)
+    except KeyboardInterrupt:
+        interrupted = True
+        log("")
+        log("[!] Прервано. Записываю отказы и пересобираю manifest по тому, что на диске.")
     if failures:
         save_json(os.path.join(ROOT, "scrape_failures.json"), failures)
         log("")
@@ -411,7 +453,7 @@ def main():
             log("      %4d x %s" % (count, reason))
 
     ok = verify(catalog)
-    raise SystemExit(0 if ok else 1)
+    raise SystemExit(130 if interrupted else (0 if ok else 1))
 
 
 if __name__ == "__main__":

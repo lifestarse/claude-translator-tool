@@ -40,10 +40,20 @@ def claim(tag):
         return False
 
 
+def unclaim(tag):
+    try:
+        os.remove(os.path.join(DRIFT_DIR, "judge_%03d.claim" % tag))
+    except OSError:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--slot", default="0")
     args = ap.parse_args()
+    # Нет claude у профиля, которому он нужен, — llm остановит запуск здесь,
+    # до захвата заданий (иначе остался бы залипший .claim).
+    llm.agent_cmd("проверка")
 
     for b in load_json(os.path.join(DRIFT_DIR, "judge_index.json"), []):
         tag = b["judge"]
@@ -56,7 +66,10 @@ def main():
         env=llm.agent_env(), cwd=ROOT, capture_output=True, timeout=1200,
                 encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
-            log(args.slot, "пакет %03d: таймаут" % tag)
+            # Claim снимается, как и при битом вердикте ниже: иначе пакет
+            # навсегда числился бы занятым и не повторялся.
+            log(args.slot, "пакет %03d: таймаут, будет повтор" % tag)
+            unclaim(tag)
             continue
         try:
             got = len(json.load(open(verdict, encoding="utf-8"))["verdicts"])
@@ -64,7 +77,7 @@ def main():
         except (OSError, ValueError, KeyError):
             log(args.slot, "пакет %03d: вердикт не записан или битый (код агента %s: %s)"
                 % (tag, proc.returncode, (proc.stderr or proc.stdout or "").strip()[-160:]))
-            os.remove(os.path.join(DRIFT_DIR, "judge_%03d.claim" % tag))
+            unclaim(tag)
     log(args.slot, "конец")
 
 

@@ -109,7 +109,8 @@ def load_verdicts():
             problems.append("%s: ожидался список вердиктов" % name)
             continue
         for item in items:
-            if not isinstance(item, dict) or "cn" not in item:
+            if not isinstance(item, dict) or not isinstance(item.get("cn"), str) \
+                    or not item["cn"].strip():
                 problems.append("%s: запись без поля cn" % name)
                 continue
             item["_batch"] = name
@@ -127,11 +128,19 @@ def main():
         print("[!] Проблемы при чтении вердиктов:")
         for p in problems:
             print("    - %s" % p)
-    if not verdicts:
-        print("Вердиктов нет — сначала запусти агентов на glossary_batches/.")
-        raise SystemExit(1)
-
     curated, _auto, pronoun_rules = load_glossary()
+    accumulated = load_json(os.path.join(ROOT, "glossary_accumulated.json"), {}) or {}
+    # Без вердиктов судей v2 всё равно собирается из накопленного, выверенного
+    # и ручных решений. Раньше выход стоял до них: при --no-prewave или пока
+    # ни одна волна не дала кандидатов, термины переводчиков в v2 не попадали
+    # никогда, а задания читают только v2. Код 1 — лишь когда нет ничего.
+    if not verdicts:
+        has_overrides = any((load_json(OVERRIDES_FILE, {}) or {}).get(k)
+                            for k in ("add", "rename", "drop"))
+        if not (accumulated.get("glossary") or curated or has_overrides):
+            print("Вердиктов нет — сначала запусти агентов на glossary_batches/.")
+            raise SystemExit(1)
+        print("[i] Вердиктов судей нет — собираю v2 из накопленного и ручных решений.")
     curated_by_cn = {t["cn"]: t for t in curated}
 
     accepted, rejected, malformed = {}, [], []
@@ -141,7 +150,11 @@ def main():
                 {"cn": v["cn"], "reason": v.get("reason", "без причины"), "batch": v["_batch"]}
             )
             continue
-        missing = [f for f in REQUIRED if not str(v.get(f) or "").strip()]
+        # Только строка: str(None) == "None" проходил проверку, а потом
+        # .strip() на null ронял весь merge — и после каждой главы v2 молча
+        # замерзал на весь прогон.
+        missing = [f for f in REQUIRED
+                   if not isinstance(v.get(f), str) or not v[f].strip()]
         if missing:
             malformed.append({"cn": v["cn"], "missing": missing, "batch": v["_batch"]})
             continue
@@ -184,7 +197,6 @@ def main():
     # cover what the statistical extractor structurally cannot see -- compound
     # unit names like 錐形細胞, whose head 細胞 is far too common to survive the
     # dispersion filter.
-    accumulated = load_json(os.path.join(ROOT, "glossary_accumulated.json"), {}) or {}
     seen_cn = {e["cn"] for e in final}
     from_translators = [e for e in accumulated.get("glossary", []) if e["cn"] not in seen_cn]
     final.extend(from_translators)
@@ -236,7 +248,8 @@ def main():
         OUT_FILE,
         {
             "note": (
-                "Глоссарий v2: 55 выверенных вручную + принятое агентами. "
+                "Глоссарий v2: выверенное вручную (glossary.json, если есть) + "
+                "принятое судьями и накопленное от переводчиков. "
                 "Конфликты не разрешены автоматически — смотри поле conflicts."
             ),
             "pronoun_rules": pronoun_rules,

@@ -1,138 +1,103 @@
 #!/usr/bin/env python3
 """Восстановление прозы, испорченной сверхширокими шаблонами реестра канонов.
 
-Гистограмма замен (replacement_detail.json, HEAD против рабочего дерева)
-показала четыре класса порчи от правил с шаблонами по обычным русским словам:
+Движок обратного пословного диффа: сравнивает главу в снимке «до правки»
+(--base, по умолчанию ru_birth/) с текущей ru/ и восстанавливает ровно тот
+фрагмент снимка, который был заменён вредным правилом; легитимные замены того
+же файла не трогаются. Каждый тронутый файл проходит validate_translation.
 
-  * «Капитаны» с шаблоном сущест\\w* — «существовало» -> «Капитаны»,
-    «существа-Кнопки» -> «Капитаны-Кнопки», задвоения «Капитан-капитан»;
-  * «Кости» с шаблоном костян\\w* — «скелетно-костяной узор» -> «скелетно-Кости»;
-  * «Страж <- Защитник» без зоны глав — «Защитник» переписан по всему корпусу,
-    хотя он законный канон другого термина; зона Стража — главы с 護衛者;
-  * точечные: «Ноль целых» -> «Зеро целых», «Поглощение пищи» -> «Глотающий
-    пищи», канон «механические жители Эрш», съеденный правилом «эршианин».
+Откуда классы порчи. Прошлая книга дала их четыре — все от правил с шаблонами
+по обычным русским словам: «существовало» -> «Капитаны» (шаблон сущест\\w*),
+«скелетно-костяной» -> «скелетно-Кости», «Страж <- Защитник» без зоны глав по
+всему корпусу, точечные порчи вроде «Ноль целых» -> «Зеро целых». Сами правила
+были той книги и сюда не перенесены: у этой книги свои термины, и правило
+отката по чужим именам испортило бы текст уже само. Классы порчи для этой
+книги заносятся в VANDAL_RULES по вердиктам termaudit («вандализм») и вычитке
+файла замен человеком — пока они пусты, скрипт честно говорит, что делать нечего.
 
-Ремонт обратным пословным диффом: восстанавливается ровно тот фрагмент HEAD,
-который был заменён вредным правилом; легитимные замены того же файла не
-трогаются. Каждый тронутый файл проходит validate_translation.
+Снимок «до» — не git: ru/ в .gitignore, `git show HEAD:ru/...` пуст. Нужна
+копия глав, снятая до массовой правки (например, `ru_birth/` — копия ru/
+перед прогоном termfix).
 
-    python repair_vandal.py --dry   # план, без записи
-    python repair_vandal.py
+    python repair_vandal.py --dry                  # план, без записи
+    python repair_vandal.py --base ru_birth
 """
 
 import argparse
 import difflib
 import io
-import json
 import os
 import re
-import subprocess
 import sys
 
-from common import ROOT, chapter_path, read_text, validate_translation
+from common import ROOT, RU_DIR, chapter_path, read_text, ru_path, validate_translation
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-STRAZH_SCOPE = {37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 54}  # главы 護衛者
+# Классы порчи: пара «было в снимке» -> «стало сейчас», которую надо откатить.
+#   old, new — регэкспы по фрагменту снимка и по заменившему его фрагменту;
+#   only     — откатывать только в этих главах (необязательно);
+#   keep     — НЕ откатывать в этих главах: там замена законна (необязательно).
+# Пример формы (правило прошлой книги, здесь не действует):
+#   {"old": r"[Сс]ущест", "new": r"Капитан", "why": "сущест\w* -> Капитаны"},
+#   {"old": r"[Зз]ащитни", "new": r"Страж", "keep": [37, 38, 54],
+#    "why": "Страж вне зоны 護衛者"},
+VANDAL_RULES = []
+
+# Точечные ремонты: (глава, регэксп по текущему тексту, замена). Только после
+# прицельного поиска и только с номером главы — никаких правил на весь корпус.
+CONTEXT_REPAIRS = []
 
 
 def classify(old, new, chapter):
-    """True — пару надо откатить к HEAD."""
-    if re.search(r"[Кк]остян", old) and re.search(r"[Кк]ост", new):
-        return True
-    if re.search(r"[Сс]ущест", old) and "Капитан" in new:
-        low = old.lower()
-        if re.search(r"Капитан\w*-[Кк]апитан", new):
-            return True          # задвоение «Капитан-капитан»
-        if "подобн" in low:
-            return True          # авторское описание схлопнуто в имя
-        if "капитанско" in low:
-            return False         # «существа капитанского типа» — легитимно
-        if re.search(r"существ\w*-[Кк]апитан", low):
-            return False         # «существа-капитаны» — легитимно
-        return True              # голое сущест\w*
-    if re.search(r"[Зз]ащитни|[Сс]тражник", old) and "Страж" in new:
-        return chapter not in STRAZH_SCOPE
+    """True — пару надо откатить к снимку."""
+    for r in VANDAL_RULES:
+        if r.get("only") and chapter not in r["only"]:
+            continue
+        if chapter in (r.get("keep") or ()):
+            continue
+        if re.search(r["old"], old) and re.search(r["new"], new):
+            return True
     return False
-
-
-# Точечные ремонты: (глава, регэксп, замена). Найдены прицельным поиском.
-CONTEXT_REPAIRS = [
-    (1964, r"Зеро целых", "Ноль целых"),
-    (2327, r"Девять-Ао-Зеро-Девять", "Девять-Ао-Ноль-Девять"),
-    (9, r"Глотающий пищи продолжался", "Поглощение пищи продолжалось"),
-]
-
-# «механические жители Эрш» — канон, съеденный шаблоном «эршианин».
-# Прилагательное остаётся, существительное возвращается в канон с падежом.
-ERSH_SUFFIX = [
-    ("эршианами", "жителями Эрш"), ("эршианам", "жителям Эрш"),
-    ("эршианах", "жителях Эрш"), ("эршианином", "жителем Эрш"),
-    ("эршианину", "жителю Эрш"), ("эршианина", "жителя Эрш"),
-    ("эршианине", "жителе Эрш"), ("эршианин", "житель Эрш"),
-    ("эршиане", "жители Эрш"), ("эршиан", "жителей Эрш"),
-]
-ERSH_RE = re.compile(r"([Мм]еханическ\w+|[Мм]ашинн\w+|полу-механическ\w+)\s+(эршиан\w*)")
-
-
-def ersh_fix(m):
-    for suf, repl in ERSH_SUFFIX:
-        if m.group(2) == suf:
-            return m.group(1) + " " + repl
-    return m.group(0)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Откат порчи от вредных правил")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--base", default=os.path.join(ROOT, "ru_birth"),
+                    help="каталог снимка глав до правки (по умолчанию ru_birth/)")
     args = ap.parse_args()
 
-    detail_file = os.path.join(ROOT, "replacement_detail.json")
-    if os.path.exists(detail_file):
-        detail = json.load(io.open(detail_file, encoding="utf-8"))
-    else:
-        print("[i] Нет replacement_detail.json (гистограмма замен по git) — "
-              "откат пар не делается, только точечные ремонты.")
-        detail = {}
-    per_file = {}
-    for key, files in detail.items():
-        old, new = key.split(" => ", 1)
-        for path in files:
-            per_file.setdefault(path.replace("\\", "/"), []).append((old, new))
-    # Точечные ремонты не зависят от гистограммы: глава из CONTEXT_REPAIRS
-    # обязана попасть в обход, даже если в detail её нет.
-    for ch, _rx, _rep in CONTEXT_REPAIRS:
-        per_file.setdefault("ru/chapter_%04d.txt" % ch, [])
+    if not VANDAL_RULES and not CONTEXT_REPAIRS:
+        print("[i] Правил отката нет (VANDAL_RULES и CONTEXT_REPAIRS пусты) — делать нечего.")
+        print("    Правила прошлой книги сняты. Классы порчи этой книги заносятся сюда")
+        print("    по вердиктам termaudit «вандализм» и вычитке файла замен.")
+        return
+    if VANDAL_RULES and not os.path.isdir(args.base):
+        print("[!] Нет снимка глав до правки: %s" % args.base)
+        print("    Пословный дифф строится от снимка, не от git (ru/ в .gitignore).")
+        print("    Укажи каталог копии ru/ до массовой правки: --base <каталог>.")
+        raise SystemExit(1)
 
+    names = sorted(n for n in os.listdir(RU_DIR)
+                   if n.startswith("chapter_") and n.endswith(".txt"))
     touched, failed, total = 0, [], 0
-    for path in sorted(per_file):
-        idx = int(path[11:15])
-        want = {(o, n) for o, n in per_file[path] if classify(o, n, idx)}
+    for name in names:
+        idx = int(name[8:12])
+        path = ru_path(idx)
         ctx = [(rx, rep) for ch, rx, rep in CONTEXT_REPAIRS if ch == idx]
-        full = os.path.join(ROOT, path)
-        if not os.path.exists(full):
+        base_file = os.path.join(args.base, name)
+        use_diff = bool(VANDAL_RULES) and os.path.exists(base_file)
+        if not use_diff and not ctx:
             continue
-        cur = read_text(full)
-        need_ersh = ERSH_RE.search(cur)
-        if not want and not ctx and not need_ersh:
-            continue
+        cur = read_text(path)
 
         plan = []
-        if want:
-            res = subprocess.run(["git", "show", "HEAD:" + path], cwd=ROOT,
-                                 capture_output=True, encoding="utf-8",
-                                 errors="replace")
-            head = res.stdout
-            if res.returncode or not head.strip():
-                # Без базиса из git дифф пуст, и откат молча ничего бы не
-                # сделал. ru/ должен быть под git, чтобы этот движок работал.
-                print("[!] %s: нет версии в HEAD (%s) — откат пар пропущен"
-                      % (path, (res.stderr or "пусто").strip()[:80]))
-                failed.append((idx, ["нет базиса в git"]))
-                want = set()
-        if want:
+        if use_diff:
+            head = read_text(base_file)
             a, b = head.split(), cur.split()
+            a_pos = list(re.finditer(r"\S+", head))
             b_pos = list(re.finditer(r"\S+", cur))
             sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
             spans = []
@@ -140,13 +105,16 @@ def main():
                 if tag != "replace":
                     continue
                 pair = (" ".join(a[i1:i2]), " ".join(b[j1:j2]))
-                if pair not in want:
+                if not classify(pair[0], pair[1], idx):
                     continue
                 start, end = b_pos[j1].start(), b_pos[j2 - 1].end()
-                if "\n" in cur[start:end]:
-                    print("[!] %s: пропуск (замена через границу абзаца): %s" % (path, pair[1][:60]))
+                # Возвращается кусок снимка как есть, с его пробелами; склейка
+                # через " " схлопнула бы перевод строки внутри фрагмента снимка.
+                old = head[a_pos[i1].start():a_pos[i2 - 1].end()]
+                if "\n" in cur[start:end] or "\n" in old:
+                    print("[!] %s: пропуск (замена через границу абзаца): %s" % (name, pair[1][:60]))
                     continue
-                spans.append((start, end, pair[0], pair[1]))
+                spans.append((start, end, old, pair[1]))
             for start, end, old, new in sorted(spans, reverse=True):
                 cur = cur[:start] + old + cur[end:]
                 plan.append("%s  <=  %s" % (old, new))
@@ -154,15 +122,11 @@ def main():
             cur, n = re.subn(rx, rep, cur)
             if n:
                 plan.append("%s  <=  %s (контекст, %d)" % (rep, rx, n))
-        if need_ersh:
-            cur, n = ERSH_RE.subn(ersh_fix, cur)
-            if n:
-                plan.append("механические жители Эрш восстановлены (%d)" % n)
 
         if not plan:
             continue
         total += len(plan)
-        print("%s:" % path)
+        print("%s:" % name)
         for line in plan:
             print("    %s" % line)
         if args.dry:
@@ -173,7 +137,8 @@ def main():
             failed.append((idx, problems))
             print("    [!] НЕ ЗАПИСАНО, приёмка: %s" % "; ".join(problems))
             continue
-        io.open(full, "w", encoding="utf-8", newline="\n").write(cur)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(cur)
         touched += 1
 
     print("")

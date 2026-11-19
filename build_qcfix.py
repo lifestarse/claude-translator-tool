@@ -25,8 +25,24 @@ rather than qc_verdicts/ directly. A verdict names one paragraph when the defect
 runs through five, and it is evidence, not an order. Every quote in that file is
 verified against the actual paragraph here; a task is never written on a guess.
 
+Формат qcfix_tasks.json (заготовку из вердиктов fix пишет
+`python qc_report.py --qcfix-draft`, дальше её вычитывает человек):
+
+    {"tasks": [
+      {"chapter": 7, "applied": false,
+       "defects": [
+         {"kind": "glossary|calque|omission|invention|meaning",
+          "paras": [50, 63],                      # абзацы к правке, с 1
+          "quotes": {"50": "...", "63": "..."},   # цитата из КАЖДОГО абзаца paras
+          "why": "что не так",
+          "canon": "канон (для glossary)", "cn": "китайский термин",
+          "keep_out": [58], "keep_out_why": "почему 58 не трогать"}]}]}
+
+Агента qcfix запускать по fixes/qcfix_index.json; драйвера с приёмкой и
+откатом, как у termfix, для qcfix пока нет.
+
     python build_qcfix.py --check
-    python build_qcfix.py --only 7 190 191 258 283 288 620
+    python build_qcfix.py --only 7 190 191
 """
 
 import argparse
@@ -56,6 +72,7 @@ KIND_RU = {
     "calque": "подстрочник",
     "omission": "выхолащивание",
     "invention": "отсебятина",
+    "meaning": "ошибка смысла",
 }
 
 TEMPLATE = """# Точечная починка: глава {idx:04d}
@@ -123,6 +140,12 @@ def build_chapter(task, terms, problems):
     allowed, forbidden, blocks = [], [], []
     for d in task["defects"]:
         paras = d["paras"]
+        # Заготовка из qc_report --qcfix-draft оставляет canon пустым: без
+        # канона агент на дефекте glossary выдумает термин сам.
+        if d.get("kind") == "glossary" and not d.get("canon"):
+            problems.append("гл.%04d: дефект glossary без canon — впиши канон "
+                            "(и cn) из глоссария" % idx)
+            return None
         for n in paras:
             if not (1 <= n <= len(ru_p)):
                 problems.append("гл.%04d: абзац %d вне диапазона 1..%d"
@@ -212,6 +235,8 @@ def main():
     spec = load_json(TASKS_FILE)
     if not spec:
         print("[!] Нет %s" % TASKS_FILE)
+        print("    Заготовка из вердиктов приёмки: python qc_report.py --qcfix-draft")
+        print("    (формат — в докстроке build_qcfix.py), затем вычитать и --check.")
         raise SystemExit(1)
 
     terms = load_terms()
@@ -294,8 +319,8 @@ def main():
     print("Заданий собрано: %d" % len(prepared))
     print("Задания в fixes/. На каждое — агент типа qcfix:")
     print('    "Файл задания: fixes/qcfix_0007.md"')
-    print("Главам, которые получают и termfix, и qcfix (258, 283), сначала")
-    print("termfix — оба агента переписывают файл целиком.")
+    print("Главам, которые получают и termfix, и qcfix, сначала termfix:")
+    print("цитаты qcfix сверяются с текстом, который лежит на диске.")
 
 
 if __name__ == "__main__":
