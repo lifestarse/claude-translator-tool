@@ -173,6 +173,11 @@ def build_epub(max_chapter=None):
     # источника, а не номер главы.
     marks = author_numbers.build()
     mapping, covered = marks["map"], marks["covered"]
+    if not mapping:
+        # Режим письма (write_run.py): исходника нет, снимать номер не с чего.
+        # Главу пишет модель по порядку, и номер файла и есть номер главы.
+        mapping = {int(os.path.basename(f)[8:-4]): (1, str(int(os.path.basename(f)[8:-4])))
+                   for f in files}
 
     chapters_data = []
     skipped = []

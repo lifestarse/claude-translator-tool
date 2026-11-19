@@ -34,6 +34,10 @@ qc_batches/*
 !qc_batches/.gitkeep
 qc_verdicts/*
 !qc_verdicts/.gitkeep
+# Режим письма: план, библия, заметки и задания — данные книги
+story/
+write_tasks/
+ru_rejected/
 # Каталог и снимки скачивания — тоже данные тайтла (excluded_chapters.json
 # ведётся руками и коммитится)
 catalog.json
